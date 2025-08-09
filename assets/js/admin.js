@@ -141,7 +141,7 @@
             var button = $(e.target);
             button.prop('disabled', true).text('Migrating Attributes...');
 
-            this.showLoadingOverlay('Migrating attributes and brands...');
+            this.showLoadingOverlay('Migrating attributes...');
 
             $.ajax({
                 url: wcBcMigrator.apiUrl + 'migrate/attributes',
@@ -154,9 +154,9 @@
                         WCBCMigrator.addLog('success', 'Migrated ' + response.options.success + ' attributes successfully');
                     }
 
-                    if (response.brands && response.brands.success > 0) {
+                    /*if (response.brands && response.brands.success > 0) {
                         WCBCMigrator.addLog('success', 'Migrated ' + response.brands.success + ' brands successfully');
-                    }
+                    }*/
 
                     localStorage.setItem('wc_bc_attributes_migrated', 'true');
 

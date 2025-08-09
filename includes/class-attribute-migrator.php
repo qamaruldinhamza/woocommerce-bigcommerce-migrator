@@ -60,13 +60,13 @@ class WC_BC_Attribute_Migrator {
         }
         
         // Migrate brands separately
-        $brand_results = $this->migrate_brands();
+        /*$brand_results = $this->migrate_brands();
         $results['brands'] = $brand_results['brands'];
-        $results['messages'] = array_merge($results['messages'], $brand_results['messages']);
+        $results['messages'] = array_merge($results['messages'], $brand_results['messages']);*/
         
         // Save mappings
         update_option('wc_bc_option_mapping', $this->option_map);
-        update_option('wc_bc_brand_mapping', $this->brand_map);
+        //update_option('wc_bc_brand_mapping', $this->brand_map);
         
         return $results;
     }

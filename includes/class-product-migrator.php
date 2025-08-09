@@ -11,7 +11,7 @@ class WC_BC_Product_Migrator {
 	public function __construct() {
 		$this->bc_api = new WC_BC_BigCommerce_API();
 		$this->load_category_mapping();
-		$this->load_brand_mapping();
+		//$this->load_brand_mapping();
 	}
 
 	public function migrate_product($wc_product_id) {
@@ -72,7 +72,7 @@ class WC_BC_Product_Migrator {
 			'inventory_level' => $product->get_stock_quantity() ?: 0,
 			'is_visible' => $product->get_catalog_visibility() !== 'hidden',
 			'categories' => $this->map_categories($product),
-			'brand_id' => $this->map_brand($product),
+			//'brand_id' => $this->map_brand($product),
 			'meta_fields' => $this->prepare_meta_fields($product),
 			'custom_fields' => $this->prepare_custom_fields($product),
 		);

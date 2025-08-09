@@ -77,10 +77,22 @@ class WC_BC_Product_Migrator {
 			'custom_fields' => $this->prepare_custom_fields($product),
 		);
 
+		// Add B2B pricing features
+		$b2b_data = $this->prepare_b2b_data($product);
+		if ($b2b_data) {
+			$data = array_merge($data, $b2b_data);
+		}
+
 		// Add images
 		$images = $this->prepare_images($product);
 		if (!empty($images)) {
 			$data['images'] = $images;
+		}
+
+		// Add related products data to custom fields
+		$related_products = $this->prepare_related_products($product);
+		if ($related_products) {
+			$data['custom_fields'] = array_merge($data['custom_fields'], $related_products);
 		}
 
 		return $data;
@@ -214,5 +226,121 @@ class WC_BC_Product_Migrator {
 	private function load_brand_mapping() {
 		// Load or create brand mapping
 		$this->brand_map = get_option('wc_bc_brand_mapping', array());
+	}
+
+	/**
+	 * Prepare B2B specific data (login to see price, etc.)
+	 */
+	private function prepare_b2b_data($product) {
+		$b2b_data = array();
+
+		// Check if product requires login to see price
+		$hide_price = get_post_meta($product->get_id(), '_hide_price_until_login', true);
+		if ($hide_price == 'yes') {
+			// In BigCommerce, we can use customer groups and price lists
+			// This will need to be configured in BC admin
+			$b2b_data['is_price_hidden'] = true;
+			$b2b_data['price_hidden_label'] = 'Login to see price';
+		}
+
+		// Check for role-based pricing
+		$role_prices = get_post_meta($product->get_id(), '_role_based_prices', true);
+		if ($role_prices) {
+			$b2b_data['custom_fields'][] = array(
+				'name' => 'role_based_pricing',
+				'value' => json_encode($role_prices)
+			);
+		}
+
+		// Check for minimum order quantities
+		$min_qty = get_post_meta($product->get_id(), '_wc_min_qty_product', true);
+		if ($min_qty) {
+			$b2b_data['order_quantity_minimum'] = (int) $min_qty;
+		}
+
+		return $b2b_data;
+	}
+
+	/**
+	 * Prepare related products (cross-sells and up-sells)
+	 */
+	private function prepare_related_products($product) {
+		$related_fields = array();
+
+		// Get cross-sell products
+		$cross_sells = $product->get_cross_sell_ids();
+		if (!empty($cross_sells)) {
+			$cross_sell_skus = array();
+			foreach ($cross_sells as $product_id) {
+				$cross_sell_product = wc_get_product($product_id);
+				if ($cross_sell_product) {
+					$cross_sell_skus[] = $cross_sell_product->get_sku();
+				}
+			}
+
+			if (!empty($cross_sell_skus)) {
+				$related_fields[] = array(
+					'name' => 'cross_sell_products',
+					'value' => implode(',', $cross_sell_skus)
+				);
+			}
+		}
+
+		// Get up-sell products
+		$upsells = $product->get_upsell_ids();
+		if (!empty($upsells)) {
+			$upsell_skus = array();
+			foreach ($upsells as $product_id) {
+				$upsell_product = wc_get_product($product_id);
+				if ($upsell_product) {
+					$upsell_skus[] = $upsell_product->get_sku();
+				}
+			}
+
+			if (!empty($upsell_skus)) {
+				$related_fields[] = array(
+					'name' => 'upsell_products',
+					'value' => implode(',', $upsell_skus)
+				);
+			}
+		}
+
+		return $related_fields;
+	}
+
+	/**
+	 * Post-process to set up related products in BigCommerce
+	 */
+	public function setup_related_products($wc_product_id, $bc_product_id) {
+		$product = wc_get_product($wc_product_id);
+		if (!$product) {
+			return;
+		}
+
+		// Process cross-sells
+		$cross_sells = $product->get_cross_sell_ids();
+		foreach ($cross_sells as $related_wc_id) {
+			$related_bc_id = $this->get_bc_product_id($related_wc_id);
+			if ($related_bc_id) {
+				$this->bc_api->add_related_product($bc_product_id, $related_bc_id);
+			}
+		}
+
+		// Note: Up-sells might need to be handled differently in BigCommerce
+		// as they don't have a direct equivalent. They're stored as custom fields
+		// and can be used by the theme/frontend.
+	}
+
+	/**
+	 * Get BigCommerce product ID from WooCommerce product ID
+	 */
+	private function get_bc_product_id($wc_product_id) {
+		global $wpdb;
+		$table_name = $wpdb->prefix . WC_BC_MIGRATOR_TABLE;
+
+		return $wpdb->get_var($wpdb->prepare(
+			"SELECT bc_product_id FROM $table_name WHERE wc_product_id = %d AND wc_variation_id IS NULL",
+			$wc_product_id
+		));
 	}
 }

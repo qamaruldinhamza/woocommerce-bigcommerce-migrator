@@ -39,6 +39,9 @@ class WC_BC_Migrator {
 		require_once WC_BC_MIGRATOR_PATH . 'includes/class-product-migrator.php';
 		require_once WC_BC_MIGRATOR_PATH . 'includes/class-rest-api.php';
 		require_once WC_BC_MIGRATOR_PATH . 'includes/class-batch-processor.php';
+		require_once WC_BC_MIGRATOR_PATH . 'includes/class-category-migrator.php';
+		require_once WC_BC_MIGRATOR_PATH . 'includes/class-attribute-migrator.php';
+		require_once WC_BC_MIGRATOR_PATH . 'includes/class-b2b-handler.php';
 	}
 
 	public function activate() {

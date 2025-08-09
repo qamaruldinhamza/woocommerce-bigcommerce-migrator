@@ -28,6 +28,30 @@ class WC_BC_REST_API {
 			'callback' => array($this, 'retry_errors'),
 			'permission_callback' => array($this, 'check_permission'),
 		));
+
+		register_rest_route('wc-bc-migrator/v1', '/migrate/categories', array(
+			'methods' => 'POST',
+			'callback' => array($this, 'migrate_categories'),
+			'permission_callback' => array($this, 'check_permission'),
+		));
+
+		register_rest_route('wc-bc-migrator/v1', '/migrate/attributes', array(
+			'methods' => 'POST',
+			'callback' => array($this, 'migrate_attributes'),
+			'permission_callback' => array($this, 'check_permission'),
+		));
+
+		register_rest_route('wc-bc-migrator/v1', '/migrate/b2b-setup', array(
+			'methods' => 'POST',
+			'callback' => array($this, 'setup_b2b'),
+			'permission_callback' => array($this, 'check_permission'),
+		));
+
+		register_rest_route('wc-bc-migrator/v1', '/test-connection', array(
+			'methods' => 'POST',
+			'callback' => array($this, 'test_connection'),
+			'permission_callback' => array($this, 'check_permission'),
+		));
 	}
 
 	public function check_permission() {
@@ -73,6 +97,34 @@ class WC_BC_REST_API {
 
 		$batch_processor = new WC_BC_Batch_Processor();
 		$result = $batch_processor->retry_errors($batch_size);
+
+		return new WP_REST_Response($result, 200);
+	}
+
+	public function migrate_categories() {
+		$category_migrator = new WC_BC_Category_Migrator();
+		$result = $category_migrator->migrate_all_categories();
+
+		return new WP_REST_Response($result, 200);
+	}
+
+	public function migrate_attributes() {
+		$attribute_migrator = new WC_BC_Attribute_Migrator();
+		$result = $attribute_migrator->migrate_all_attributes();
+
+		return new WP_REST_Response($result, 200);
+	}
+
+	public function setup_b2b() {
+		$b2b_handler = new WC_BC_B2B_Handler();
+		$result = $b2b_handler->setup_b2b_features();
+
+		return new WP_REST_Response($result, 200);
+	}
+
+	public function test_connection() {
+		$bc_api = new WC_BC_BigCommerce_API();
+		$result = $bc_api->test_connection();
 
 		return new WP_REST_Response($result, 200);
 	}

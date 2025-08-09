@@ -117,4 +117,16 @@ class WC_BC_BigCommerce_API {
 			'error' => isset($response['error']) ? $response['error'] : 'Connection failed'
 		);
 	}
+
+	public function get_categories_filtered($name = '', $parent_id = null) {
+		$query = 'catalog/categories?limit=250';
+		if ($name) $query .= '&name=' . urlencode($name);
+		if ($parent_id !== null) $query .= '&parent_id=' . $parent_id;
+		return $this->make_request($query);
+	}
+
+	public function get_categories_paginated($page = 1, $limit = 250) {
+		return $this->make_request("catalog/categories?page={$page}&limit={$limit}");
+	}
+
 }

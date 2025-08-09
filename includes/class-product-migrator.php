@@ -6,12 +6,21 @@ class WC_BC_Product_Migrator {
 
 	private $bc_api;
 	private $category_map = array();
-	private $brand_map = array();
+	private $option_map = array();
+	private $attribute_map = array();
 
 	public function __construct() {
 		$this->bc_api = new WC_BC_BigCommerce_API();
-		$this->load_category_mapping();
-		//$this->load_brand_mapping();
+		$this->load_mappings();
+	}
+
+	/**
+	 * Load all mappings at once for better performance
+	 */
+	private function load_mappings() {
+		$this->category_map = get_option('wc_bc_category_mapping', array());
+		$this->option_map = get_option('wc_bc_option_mapping', array());
+		$this->attribute_map = get_option('wc_bc_attribute_mapping', array());
 	}
 
 	public function migrate_product($wc_product_id) {
@@ -46,6 +55,9 @@ class WC_BC_Product_Migrator {
 				$this->migrate_variations($product, $bc_product_id);
 			}
 
+			// Apply B2B pricing rules after product creation
+			$this->apply_b2b_pricing($wc_product_id, $bc_product_id);
+
 			return array('success' => true, 'bc_product_id' => $bc_product_id);
 
 		} catch (Exception $e) {
@@ -72,21 +84,22 @@ class WC_BC_Product_Migrator {
 			'inventory_level' => $product->get_stock_quantity() ?: 0,
 			'is_visible' => $product->get_catalog_visibility() !== 'hidden',
 			'categories' => $this->map_categories($product),
-			//'brand_id' => $this->map_brand($product),
 			'meta_fields' => $this->prepare_meta_fields($product),
 			'custom_fields' => $this->prepare_custom_fields($product),
 		);
-
-		// Add B2B pricing features
-		$b2b_data = $this->prepare_b2b_data($product);
-		if ($b2b_data) {
-			$data = array_merge($data, $b2b_data);
-		}
 
 		// Add images
 		$images = $this->prepare_images($product);
 		if (!empty($images)) {
 			$data['images'] = $images;
+		}
+
+		// For simple products with attributes, add them as modifier options
+		if ($product->is_type('simple')) {
+			$modifiers = $this->prepare_simple_product_modifiers($product);
+			if (!empty($modifiers)) {
+				$data['modifiers'] = $modifiers;
+			}
 		}
 
 		// Add related products data to custom fields
@@ -131,41 +144,83 @@ class WC_BC_Product_Migrator {
 
 		foreach ($wc_categories as $cat_id) {
 			if (isset($this->category_map[$cat_id])) {
-				$bc_categories[] = $this->category_map[$cat_id];
+				$bc_categories[] = (int) $this->category_map[$cat_id];
 			}
 		}
 
 		return $bc_categories;
 	}
 
-	private function map_brand($product) {
-		// You can customize this based on how brands are stored in WooCommerce
-		$brand = $product->get_attribute('brand');
-		if ($brand && isset($this->brand_map[$brand])) {
-			return $this->brand_map[$brand];
-		}
-		return null;
-	}
-
 	private function prepare_meta_fields($product) {
-		// Prepare meta fields based on your requirements
-		return array();
+		$meta_fields = array();
+
+		// Add any WooCommerce meta data that should be preserved
+		// Example: Add product-specific SEO data
+		$seo_title = get_post_meta($product->get_id(), '_yoast_wpseo_title', true);
+		if ($seo_title) {
+			$meta_fields[] = array(
+				'permission_set' => 'read',
+				'namespace' => 'seo',
+				'key' => 'title',
+				'value' => $seo_title
+			);
+		}
+
+		return $meta_fields;
 	}
 
 	private function prepare_custom_fields($product) {
 		$custom_fields = array();
+
+		// Add WooCommerce product ID for reference
+		$custom_fields[] = array(
+			'name' => 'wc_product_id',
+			'value' => (string) $product->get_id()
+		);
+
+		// Add product tags as custom field
+		$tags = wp_get_post_terms($product->get_id(), 'product_tag', array('fields' => 'names'));
+		if (!empty($tags)) {
+			$custom_fields[] = array(
+				'name' => 'product_tags',
+				'value' => implode(', ', $tags)
+			);
+		}
+
+		// Add any other custom meta fields from WooCommerce
+		// Skip attributes as they're handled separately
+
+		return $custom_fields;
+	}
+
+	/**
+	 * Prepare modifiers for simple products with attributes
+	 */
+	private function prepare_simple_product_modifiers($product) {
+		$modifiers = array();
 		$attributes = $product->get_attributes();
 
 		foreach ($attributes as $attribute) {
-			if (!$attribute->get_variation()) {
-				$custom_fields[] = array(
-					'name' => $attribute->get_name(),
-					'value' => implode(', ', $attribute->get_options()),
-				);
+			// Skip variation attributes
+			if ($attribute->get_variation()) {
+				continue;
 			}
+
+			$modifier = array(
+				'type' => 'text',
+				'required' => false,
+				'display_name' => $attribute->get_name(),
+				'config' => array(
+					'default_value' => implode(', ', $attribute->get_options()),
+					'text_min_length' => 0,
+					'text_max_length' => 255
+				)
+			);
+
+			$modifiers[] = $modifier;
 		}
 
-		return $custom_fields;
+		return $modifiers;
 	}
 
 	private function migrate_variations($product, $bc_product_id) {
@@ -198,6 +253,17 @@ class WC_BC_Product_Migrator {
 						'message' => 'Variation migrated successfully',
 					)
 				);
+			} else {
+				$error_msg = isset($result['error']) ? $result['error'] : 'Unknown error';
+				WC_BC_Database::update_mapping(
+					$product->get_id(),
+					$variation->get_id(),
+					array(
+						'bc_product_id' => $bc_product_id,
+						'status' => 'error',
+						'message' => 'Failed to migrate variation: ' . $error_msg,
+					)
+				);
 			}
 		}
 	}
@@ -207,58 +273,38 @@ class WC_BC_Product_Migrator {
 		$attributes = $variation->get_variation_attributes();
 
 		foreach ($attributes as $attribute_name => $attribute_value) {
-			// You'll need to map these to BigCommerce option IDs
-			// This is a simplified version
-			$option_values[] = array(
-				'option_display_name' => str_replace('attribute_', '', $attribute_name),
-				'label' => $attribute_value,
-			);
+			// Clean attribute name
+			$clean_name = str_replace('attribute_pa_', '', $attribute_name);
+			$clean_name = str_replace('attribute_', '', $clean_name);
+
+			// Map to BigCommerce option ID if available
+			if (isset($this->option_map[$clean_name])) {
+				$option_values[] = array(
+					'option_id' => (int) $this->option_map[$clean_name],
+					'label' => $attribute_value,
+				);
+			} else {
+				// Fallback to display name
+				$option_values[] = array(
+					'option_display_name' => ucfirst(str_replace('_', ' ', $clean_name)),
+					'label' => $attribute_value,
+				);
+			}
 		}
 
 		return $option_values;
 	}
 
-	private function load_category_mapping() {
-		// Load or create category mapping
-		$this->category_map = get_option('wc_bc_category_mapping', array());
-	}
-
-	private function load_brand_mapping() {
-		// Load or create brand mapping
-		$this->brand_map = get_option('wc_bc_brand_mapping', array());
-	}
-
 	/**
-	 * Prepare B2B specific data (login to see price, etc.)
+	 * Apply B2B pricing rules (all products require login to see price)
 	 */
-	private function prepare_b2b_data($product) {
-		$b2b_data = array();
+	private function apply_b2b_pricing($wc_product_id, $bc_product_id) {
+		// Since all products require login to see price,
+		// this should be handled via BigCommerce customer groups and price lists
+		// The B2B handler class should have already set up the price lists
 
-		// Check if product requires login to see price
-		$hide_price = get_post_meta($product->get_id(), '_hide_price_until_login', true);
-		if ($hide_price == 'yes') {
-			// In BigCommerce, we can use customer groups and price lists
-			// This will need to be configured in BC admin
-			$b2b_data['is_price_hidden'] = true;
-			$b2b_data['price_hidden_label'] = 'Login to see price';
-		}
-
-		// Check for role-based pricing
-		$role_prices = get_post_meta($product->get_id(), '_role_based_prices', true);
-		if ($role_prices) {
-			$b2b_data['custom_fields'][] = array(
-				'name' => 'role_based_pricing',
-				'value' => json_encode($role_prices)
-			);
-		}
-
-		// Check for minimum order quantities
-		$min_qty = get_post_meta($product->get_id(), '_wc_min_qty_product', true);
-		if ($min_qty) {
-			$b2b_data['order_quantity_minimum'] = (int) $min_qty;
-		}
-
-		return $b2b_data;
+		$b2b_handler = new WC_BC_B2B_Handler();
+		$b2b_handler->apply_b2b_pricing($wc_product_id, $bc_product_id);
 	}
 
 	/**
@@ -272,9 +318,14 @@ class WC_BC_Product_Migrator {
 		if (!empty($cross_sells)) {
 			$cross_sell_skus = array();
 			foreach ($cross_sells as $product_id) {
-				$cross_sell_product = wc_get_product($product_id);
-				if ($cross_sell_product) {
-					$cross_sell_skus[] = $cross_sell_product->get_sku();
+				try {
+					$cross_sell_product = wc_get_product($product_id);
+					if ($cross_sell_product && $cross_sell_product->get_sku()) {
+						$cross_sell_skus[] = $cross_sell_product->get_sku();
+					}
+				} catch (Exception $e) {
+					// Skip if product doesn't exist
+					continue;
 				}
 			}
 
@@ -291,9 +342,14 @@ class WC_BC_Product_Migrator {
 		if (!empty($upsells)) {
 			$upsell_skus = array();
 			foreach ($upsells as $product_id) {
-				$upsell_product = wc_get_product($product_id);
-				if ($upsell_product) {
-					$upsell_skus[] = $upsell_product->get_sku();
+				try {
+					$upsell_product = wc_get_product($product_id);
+					if ($upsell_product && $upsell_product->get_sku()) {
+						$upsell_skus[] = $upsell_product->get_sku();
+					}
+				} catch (Exception $e) {
+					// Skip if product doesn't exist
+					continue;
 				}
 			}
 
@@ -306,29 +362,6 @@ class WC_BC_Product_Migrator {
 		}
 
 		return $related_fields;
-	}
-
-	/**
-	 * Post-process to set up related products in BigCommerce
-	 */
-	public function setup_related_products($wc_product_id, $bc_product_id) {
-		$product = wc_get_product($wc_product_id);
-		if (!$product) {
-			return;
-		}
-
-		// Process cross-sells
-		$cross_sells = $product->get_cross_sell_ids();
-		foreach ($cross_sells as $related_wc_id) {
-			$related_bc_id = $this->get_bc_product_id($related_wc_id);
-			if ($related_bc_id) {
-				$this->bc_api->add_related_product($bc_product_id, $related_bc_id);
-			}
-		}
-
-		// Note: Up-sells might need to be handled differently in BigCommerce
-		// as they don't have a direct equivalent. They're stored as custom fields
-		// and can be used by the theme/frontend.
 	}
 
 	/**

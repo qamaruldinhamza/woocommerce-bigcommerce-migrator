@@ -71,7 +71,7 @@ class WC_BC_Migrator {
 
 	public function enqueue_admin_scripts($hook) {
 		if ('toplevel_page_wc-bc-migrator' !== $hook) {
-			return;
+			//return;
 		}
 
         // Resolve asset locations: support either assets/js|css/ or root-level files

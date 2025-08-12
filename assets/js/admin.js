@@ -8,6 +8,7 @@
 
         init: function() {
             this.bindEvents();
+            this.hideLoadingOverlay();
             this.loadStats();
             this.checkMigrationStatus();
         },
@@ -86,6 +87,14 @@
                     $('#stat-pending').text(response.pending);
                     $('#stat-success').text(response.success);
                     $('#stat-error').text(response.error);
+
+                    // Hide/show the Errors card depending on count
+                    var $errorCard = $('.stat-card.error');
+                    if (Number(response.error) > 0) {
+                        $errorCard.show();
+                    } else {
+                        $errorCard.hide();
+                    }
 
                     // Show reset button if there's data
                     if (response.total > 0) {

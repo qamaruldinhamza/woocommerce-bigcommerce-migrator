@@ -24,7 +24,7 @@ class WC_BC_Migrator {
 
 		// Admin hooks
 		add_action('admin_menu', array($this, 'add_admin_menu'));
-
+		add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_scripts'));
 
 		// REST API hooks
 		add_action('rest_api_init', array($this, 'register_rest_routes'));
@@ -69,6 +69,31 @@ class WC_BC_Migrator {
 		include WC_BC_MIGRATOR_PATH . 'admin/admin-page.php';
 	}
 
+	public function enqueue_admin_scripts($hook) {
+		if ('toplevel_page_wc-bc-migrator' !== $hook) {
+			return;
+		}
+
+		wp_enqueue_script(
+			'wc-bc-migrator-admin',
+			WC_BC_MIGRATOR_URL . 'assets/js/admin.js',
+			array('jquery', 'wp-api'),
+			WC_BC_MIGRATOR_VERSION,
+			true
+		);
+
+		wp_localize_script('wc-bc-migrator-admin', 'wcBcMigrator', array(
+			'apiUrl' => home_url('/wp-json/wc-bc-migrator/v1/'),
+			'nonce' => wp_create_nonce('wp_rest'),
+		));
+
+		wp_enqueue_style(
+			'wc-bc-migrator-admin',
+			WC_BC_MIGRATOR_URL . 'assets/css/admin.css',
+			array(),
+			WC_BC_MIGRATOR_VERSION
+		);
+	}
 
 	public function register_rest_routes() {
 		$rest_api = new WC_BC_REST_API();

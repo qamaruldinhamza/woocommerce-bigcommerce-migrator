@@ -24,7 +24,7 @@ class WC_BC_Migrator {
 
 		// Admin hooks
 		add_action('admin_menu', array($this, 'add_admin_menu'));
-		add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_scripts'));
+
 
 		// REST API hooks
 		add_action('rest_api_init', array($this, 'register_rest_routes'));
@@ -69,45 +69,6 @@ class WC_BC_Migrator {
 		include WC_BC_MIGRATOR_PATH . 'admin/admin-page.php';
 	}
 
-	public function enqueue_admin_scripts($hook) {
-		if ('toplevel_page_wc-bc-migrator' !== $hook) {
-			//return;
-		}
-
-        // Resolve asset locations: support either assets/js|css/ or root-level files
-        $js_rel  = file_exists(WC_BC_MIGRATOR_PATH . 'assets/js/admin.js') ? 'assets/js/admin.js' : 'admin.js';
-        $css_rel = file_exists(WC_BC_MIGRATOR_PATH . 'assets/css/admin.css') ? 'assets/css/admin.css' : 'admin.css';
-
-        $js_path  = WC_BC_MIGRATOR_PATH . $js_rel;
-        $css_path = WC_BC_MIGRATOR_PATH . $css_rel;
-
-        $js_url  = WC_BC_MIGRATOR_URL . $js_rel;
-        $css_url = WC_BC_MIGRATOR_URL . $css_rel;
-
-        // Use filemtime for cache-busting if constant not defined
-        $js_ver  = defined('WC_BC_MIGRATOR_VERSION') ? WC_BC_MIGRATOR_VERSION : (file_exists($js_path) ? filemtime($js_path) : false);
-        $css_ver = defined('WC_BC_MIGRATOR_VERSION') ? WC_BC_MIGRATOR_VERSION : (file_exists($css_path) ? filemtime($css_path) : false);
-
-        wp_enqueue_script(
-            'wc-bc-migrator-admin',
-            $js_url,
-            array('jquery', 'wp-api'),
-            $js_ver,
-            true
-        );
-
-        wp_localize_script('wc-bc-migrator-admin', 'wcBcMigrator', array(
-            'apiUrl' => trailingslashit( rest_url('wc-bc-migrator/v1') ),
-            'nonce'  => wp_create_nonce('wp_rest'),
-        ));
-
-        wp_enqueue_style(
-            'wc-bc-migrator-admin',
-            $css_url,
-            array(),
-            $css_ver
-        );
-	}
 
 	public function register_rest_routes() {
 		$rest_api = new WC_BC_REST_API();

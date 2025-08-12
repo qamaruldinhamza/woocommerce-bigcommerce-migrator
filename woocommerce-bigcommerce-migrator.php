@@ -59,7 +59,7 @@ function enqueue_admin_scripts($hook) {
 	$js_ver  = defined('WC_BC_MIGRATOR_VERSION') ? WC_BC_MIGRATOR_VERSION : (file_exists($js_path) ? filemtime($js_path) : false);
 	$css_ver = defined('WC_BC_MIGRATOR_VERSION') ? WC_BC_MIGRATOR_VERSION : (file_exists($css_path) ? filemtime($css_path) : false);
 
-	wp_enqueue_script(
+	/*wp_enqueue_script(
 		'wc-bc-migrator-admin',
 		$js_url,
 		array('jquery', 'wp-api'),
@@ -77,5 +77,5 @@ function enqueue_admin_scripts($hook) {
 		$css_url,
 		array(),
 		$css_ver
-	);
+	);*/
 }

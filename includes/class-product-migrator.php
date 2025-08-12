@@ -336,14 +336,16 @@ class WC_BC_Product_Migrator {
 	}
 
 	private function prepare_product_data($product) {
+		// Get and fix weight
+		$weight = $this->convert_and_fix_weight($product->get_weight());
+
 		$data = array(
 			'name' => $product->get_name(),
 			'type' => 'physical',
 			'sku' => $product->get_sku() ?: 'SKU-' . $product->get_id(),
 			'description' => $product->get_description(),
-			'weight' => (float) ($product->get_weight() ?: 0),
+			'weight' => (float) $weight, // Now in ounces
 			'price' => (float) ($product->get_regular_price() ?: 0),
-			'sale_price' => $product->get_sale_price() ? (float) $product->get_sale_price() : null,
 			'retail_price' => (float) ($product->get_regular_price() ?: 0),
 			'inventory_tracking' => $product->get_manage_stock() ? 'product' : 'none',
 			'inventory_level' => (int) ($product->get_stock_quantity() ?: 0),
@@ -351,6 +353,13 @@ class WC_BC_Product_Migrator {
 			'categories' => $this->map_categories($product),
 			'custom_fields' => $this->prepare_custom_fields($product),
 		);
+
+		// Handle sale price properly
+		$sale_price = $product->get_sale_price();
+		if ($sale_price !== '' && $sale_price !== null && (float) $sale_price > 0) {
+			$data['sale_price'] = (float) $sale_price;
+		}
+
 
 		// Add SEO fields
 		$seo_fields = $this->prepare_seo_fields($product);
@@ -548,16 +557,23 @@ class WC_BC_Product_Migrator {
 			$variation = wc_get_product($variation_data['variation_id']);
 			if (!$variation) continue;
 
-			// Prepare variant data
+			$variant_weight = $this->convert_and_fix_weight($variation->get_weight() ?: $product->get_weight());
+
 			$variant_data = array(
 				'sku' => $variation->get_sku() ?: 'VAR-' . $variation->get_id(),
 				'price' => (float) ($variation->get_regular_price() ?: $product->get_regular_price()),
-				'sale_price' => $variation->get_sale_price() ? (float) $variation->get_sale_price() : null,
 				'retail_price' => (float) ($variation->get_regular_price() ?: $product->get_regular_price()),
-				'weight' => (float) ($variation->get_weight() ?: $product->get_weight() ?: 0),
+				'weight' => (float) $variant_weight, // Now in ounces
 				'inventory_level' => (int) ($variation->get_stock_quantity() ?: 0),
 				'inventory_tracking' => $variation->get_manage_stock() ? 'variant' : 'none',
 			);
+
+			// Handle variant sale price properly
+			$variant_sale_price = $variation->get_sale_price();
+			if ($variant_sale_price !== '' && $variant_sale_price !== null && (float) $variant_sale_price > 0) {
+				$variant_data['sale_price'] = (float) $variant_sale_price;
+			}
+
 
 			// Prepare option values using product-specific options
 			$option_values = $this->prepare_variant_option_values($variation, $product_options);
@@ -738,5 +754,59 @@ class WC_BC_Product_Migrator {
 			"SELECT bc_product_id FROM $table_name WHERE wc_product_id = %d AND wc_variation_id IS NULL",
 			$wc_product_id
 		));
+	}
+
+
+	/**
+	 * Convert weight from grams to ounces and fix formatting issues
+	 */
+	private function convert_and_fix_weight($weight_string) {
+		if (empty($weight_string)) {
+			return 0;
+		}
+
+		// Convert to string if it's not
+		$weight_string = (string) $weight_string;
+
+		// Check if it contains a range (dash or hyphen)
+		if (strpos($weight_string, '-') !== false || strpos($weight_string, '–') !== false) {
+			// Split by various dash types
+			$parts = preg_split('/[-–—]/', $weight_string);
+
+			if (count($parts) == 2) {
+				$value1 = $this->parse_weight_value(trim($parts[0]));
+				$value2 = $this->parse_weight_value(trim($parts[1]));
+
+				// Fix the reversed range issue (29-3.5 should be 2.9-3.5)
+				if ($value1 > $value2 && $value1 > 10 && $value2 < 10) {
+					// Likely a typo - convert 29 to 2.9
+					$value1 = $value1 / 10;
+				}
+
+				// Return the maximum value
+				$weight_grams = max($value1, $value2);
+			} else {
+				// Single value
+				$weight_grams = $this->parse_weight_value($weight_string);
+			}
+		} else {
+			// Single value
+			$weight_grams = $this->parse_weight_value($weight_string);
+		}
+
+		// Convert grams to ounces (1 gram = 0.035274 ounces)
+		$weight_ounces = $weight_grams * 0.035274;
+
+		// Round to 2 decimal places
+		return round($weight_ounces, 2);
+	}
+
+	/**
+	 * Parse weight value from string
+	 */
+	private function parse_weight_value($value) {
+		// Remove any non-numeric characters except decimal point
+		$value = preg_replace('/[^0-9.]/', '', $value);
+		return (float) $value;
 	}
 }

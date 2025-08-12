@@ -34,6 +34,6 @@ require_once WC_BC_MIGRATOR_PATH . "includes/class-b2b-handler.php";
 
 // Initialize the plugin
 add_action('plugins_loaded', function() {
-	WC_BC_Migrator::get_instance();
+	WC_BC_Migrator::get_instance(); 
 });
 

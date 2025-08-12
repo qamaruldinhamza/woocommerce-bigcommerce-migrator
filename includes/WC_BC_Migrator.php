@@ -76,7 +76,7 @@ class WC_BC_Migrator {
 
 		wp_enqueue_script(
 			'wc-bc-migrator-admin',
-			WC_BC_MIGRATOR_URL . 'assets/js/admin.js',
+			WC_BC_MIGRATOR_URL . '/assets/js/admin.js',
 			array('jquery', 'wp-api'),
 			WC_BC_MIGRATOR_VERSION,
 			true

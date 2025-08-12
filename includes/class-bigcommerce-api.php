@@ -129,4 +129,12 @@ class WC_BC_BigCommerce_API {
 		return $this->make_request("catalog/categories?page={$page}&limit={$limit}");
 	}
 
+	public function get_options_paginated($page = 1, $limit = 250) {
+		return $this->make_request("catalog/products/options?page={$page}&limit={$limit}");
+	}
+
+	public function get_option_values($option_id) {
+		return $this->make_request("catalog/products/options/{$option_id}/values");
+	}
+
 }

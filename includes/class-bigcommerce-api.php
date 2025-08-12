@@ -137,4 +137,16 @@ class WC_BC_BigCommerce_API {
 		return $this->make_request("catalog/products/options/{$option_id}/values");
 	}
 
+
+	public function create_product_option($product_id, $option_data) {
+		return $this->make_request("catalog/products/{$product_id}/options", 'POST', $option_data);
+	}
+
+	public function create_product_option_value($option_id, $value_data) {
+		return $this->make_request("catalog/products/options/{$option_id}/values", 'POST', $value_data);
+	}
+
+	public function get_product_options($product_id) {
+		return $this->make_request("catalog/products/{$product_id}/options");
+	}
 }

@@ -53,25 +53,22 @@
 
         checkPrerequisites: function() {
             var categoriesMigrated = localStorage.getItem('wc_bc_categories_migrated') === 'true';
-            var attributesMigrated = localStorage.getItem('wc_bc_attributes_migrated') === 'true';
             var b2bSetup = localStorage.getItem('wc_bc_b2b_setup') === 'true';
 
-            if (!categoriesMigrated || !attributesMigrated || !b2bSetup) {
+            if (!categoriesMigrated || !b2bSetup) {
                 this.showPrerequisiteNotice();
             }
         },
 
         showPrerequisiteNotice: function() {
-            var notice = $('<div class="notice notice-warning"><p><strong>Setup Required:</strong> Please migrate categories, attributes, and set up B2B features before migrating products.</p></div>');
+            var notice = $('<div class="notice notice-warning"><p><strong>Setup Required:</strong> Please migrate categories and set up B2B features before migrating products.</p></div>');
             notice.append('<button class="button" id="migrate-categories">Migrate Categories</button> ');
-            notice.append('<button class="button" id="migrate-attributes">Migrate Attributes</button> ');
             notice.append('<button class="button" id="setup-b2b">Setup B2B Features</button>');
 
             $('.wc-bc-container').prepend(notice);
 
             // Bind events to new buttons
             notice.find('#migrate-categories').on('click', this.migrateCategories.bind(this));
-            notice.find('#migrate-attributes').on('click', this.migrateAttributes.bind(this));
             notice.find('#setup-b2b').on('click', this.setupB2B.bind(this));
         },
 

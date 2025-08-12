@@ -213,6 +213,7 @@ $client_secret = get_option('wc_bc_client_secret', '');
     <script type="text/javascript">
         wcBcMigrator = {
             "apiUrl" : "<?php echo trailingslashit( rest_url('wc-bc-migrator/v1')); ?>",
+            'nonce'  => "<?php echo wp_create_nonce('wp_rest'); ?>",
         }
 
     </script>

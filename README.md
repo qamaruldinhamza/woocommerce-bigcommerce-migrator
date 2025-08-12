@@ -295,3 +295,146 @@ $results = $wpdb->get_results(
 - Update mappings as needed
 
 This plugin provides a solid foundation for your migration needs. Customize as required for your specific use case.
+# WooCommerce → BigCommerce Migrator — Implementation Guide
+
+## Overview
+A production‑oriented WordPress plugin to migrate large WooCommerce catalogs (5,000+ products) to BigCommerce with resumable **batch processing**, **variation/option handling**, **category & attribute mapping**, and a minimal **admin UI** for visibility and control.
+
+## Requirements
+- WordPress 6.0+
+- WooCommerce 6.0+
+- PHP 7.4+ (PHP 8.x recommended)
+- BigCommerce store with API credentials (v3)
+
+## Plugin Architecture
+
+### Database (`wp_wc_bc_product_mapping`)
+Tracks every item/variant across the migration lifecycle:
+```
+- id (PK)
+- wc_product_id
+- wc_variation_id NULLABLE
+- bc_product_id NULLABLE
+- bc_variation_id NULLABLE
+- status ENUM('pending','success','error','skipped')
+- message TEXT
+- created_at DATETIME
+- updated_at DATETIME
+- retry_count INT DEFAULT 0
+```
+
+### Key Components
+- **`WC_BC_Migrator`** — boots the plugin, registers hooks, menus, assets.
+- **`WC_BC_Database`** — creates/maintains the mapping table, helpers for state transitions.
+- **`WC_BC_BigCommerce_API`** — REST client, auth, pagination, retries/backoff, error normalization.
+- **`WC_BC_Product_Migrator`** — transforms Woo → BC objects, handles images, stock, SEO fields; builds variants & options.
+- **`WC_BC_Category_Migrator`** — creates hierarchical categories (parents before children), keeps WC→BC ID map.
+- **`WC_BC_Attribute_Migrator`** — maps global attributes to BC options/values for variant generation.
+- **`WC_BC_B2B_Handler`** — optional: customer groups, price lists, and related B2B entities (idempotent).
+- **`WC_BC_Batch_Processor`** — chunked execution (5–50 items), resumable with progress reporting.
+- **`WC_BC_REST_API`** — endpoints used by the admin UI for prepare/migrate/retry/stats.
+- **Admin UI** — minimal controls + live progress (see `admin/admin-page.php`, `assets/js/admin.js`).
+
+## File Structure
+```
+woocommerce-bigcommerce-migrator/
+├── woocommerce-bigcommerce-migrator.php        (main plugin bootstrap)
+├── WC_BC_Migrator.php
+├── class-database.php
+├── class-bigcommerce-api.php
+├── class-product-migrator.php
+├── class-category-migrator.php
+├── class-attribute-migrator.php
+├── class-batch-processor.php
+├── class-rest-api.php
+├── class-b2b-handler.php
+├── admin/
+│   └── admin-page.php
+├── assets/
+│   ├── css/
+│   │   └── admin.css
+│   └── js/
+│       └── admin.js
+├── README.md
+└── .gitignore
+```
+*(If your repo name or main file differs, adjust accordingly.)*
+
+## BigCommerce API Setup
+1. In **BigCommerce**: create an API account (v3) with scopes: Products (modify), Product Categories (modify), Product Variants (modify), Brands (modify).  
+2. Save **Store Hash** and **Access Token** in WP Admin → *Woo → BC Migrator* → **Settings**.  
+3. Optional: set rate‑limit safety (requests/second) and default batch size.
+
+## Migration Workflow
+### 1) Preparation
+- Scan WooCommerce catalog and seed the mapping table (`status = pending`).
+- Ensure **category** and **attribute** mappings are created first.
+
+### 2) Category & Attribute Migration
+- Run Category migrator → creates BC categories, stores WC term → BC ID map.
+- Run Attribute migrator → creates BC options/values for use by product variants.
+
+### 3) Product Migration (Batches)
+- Process in batches (default 10). Each cycle returns `{processed, success, error, remaining}`.
+- Products with variations: parent first, then variants linked via created option set.
+- Images: primary (`is_thumbnail: true`) + gallery; deduped by URL.
+
+### 4) Error Handling & Retries
+- Failures recorded with `status = error` and a normalized `message`.
+- Use **Retry failed** (with `retry_count` cap) to re‑attempt transient issues.
+
+### 5) Reporting
+- Stats endpoint aggregates counts by status.  
+- Export CSV report of `success` and `error` rows from the mapping table as needed.
+
+## Rate Limits & Timeouts
+- BigCommerce typical limits: ~450 req/hour; ~7 req/sec burst.  
+- The API client applies backoff on **429/5xx** and exposes headers for monitoring.  
+- Keep batch sizes small on shared hosting to avoid PHP timeouts.
+
+## Deployment Options
+### A) Simple Git Pull (no YAML)
+- Clone the repo directly to: `wp-content/plugins/woocommerce-bigcommerce-migrator` and click **Pull** in cPanel’s Git UI after merges.
+
+### B) Safer Deploy with `.cpanel.yml`
+Clone the repo **outside** webroot and add `.cpanel.yml` for atomic deploys into the plugin directory:
+```yaml
+---
+deployment:
+  tasks:
+    - export DEPLOY_DIR=/home/CPANEL_USER/public_html/wp-content/plugins/woocommerce-bigcommerce-migrator
+    - /bin/mkdir -p "$DEPLOY_DIR"
+    - /bin/rsync -a --delete --exclude='.git' --exclude='.github' --exclude='node_modules' ./ "$DEPLOY_DIR"/
+    - /bin/find "$DEPLOY_DIR" -type d -exec /bin/chmod 755 {} \;
+    - /bin/find "$DEPLOY_DIR" -type f -exec /bin/chmod 644 {} \;
+```
+Then use **Deploy HEAD commit** from cPanel’s Git interface.
+
+## Troubleshooting
+- **Timeouts** → lower batch size, increase `max_execution_time`, run fewer concurrent admin tabs.  
+- **429 / rate‑limit** → the client will back off; consider reducing batch size.  
+- **Data mismatch** → inspect normalized payloads; check special characters/HTML; verify category & attribute IDs.
+- Enable logging: add to `wp-config.php`:
+```php
+define('WP_DEBUG', true);
+define('WP_DEBUG_LOG', true); // logs to wp-content/debug.log
+```
+
+## Safety & Rollback
+- The plugin is **idempotent** where possible (checks for existing by SKU/ID maps).  
+- Keep WooCommerce as the source of truth until validation completes.  
+- To clean up in BC, use the stored `bc_product_id` values (scriptable via the API).
+
+## Roadmap / Advanced
+- SEO meta migration (Yoast/Rank Math → BC SEO fields).
+- Review migration via BC Reviews API.
+- Related/cross‑sell relationships via BC endpoints.
+- WP‑CLI commands for headless runs.
+
+## Support & Maintenance
+- Track BigCommerce API changes.
+- Periodically prune old logs and `error` entries after resolution.
+- Document mapping decisions for future audits.
+
+---
+**Tip:** Start with 10–20 representative products (incl. variables) in a sandbox store, validate every field (title, price, options, images, stock, category path), then scale up.

@@ -25,52 +25,74 @@ class WC_BC_Product_Migrator {
 	}
 
 	public function migrate_product($wc_product_id) {
-		$product = wc_get_product($wc_product_id);
+	$product = wc_get_product($wc_product_id);
 
-		if (!$product) {
-			return array('error' => 'Product not found');
-		}
+	if (!$product) {
+		return array('error' => 'Product not found');
+	}
 
-		try {
-			// Prepare product data
-			$product_data = $this->prepare_product_data($product);
+	try {
+		// If already mapped in our table, reuse BC ID and skip creating a duplicate
+		$existing_bc_id = $this->get_bc_product_id($wc_product_id);
 
+		// Prepare product data (always needed for variants/options and potential updates)
+		$product_data = $this->prepare_product_data($product);
+
+		$bc_product_id = null;
+
+		if ($existing_bc_id) {
+			// Treat as already created; proceed to options/variants using the existing BC product
+			$bc_product_id = (int) $existing_bc_id;
+
+			// Ensure mapping row is marked success for the parent (idempotent)
+			WC_BC_Database::update_mapping($wc_product_id, null, array(
+				'bc_product_id' => $bc_product_id,
+				'status' => 'success',
+				'message' => 'Product already mapped; proceeding with variants/options',
+			));
+		} else {
 			// Create product in BigCommerce
 			$result = $this->bc_api->create_product($product_data);
 
-			if (isset($result['error'])) {
-				throw new Exception($result['error'] . ' - ' . json_encode($result));
+			// Normalize WP_Error or unexpected structures into exceptions
+			if (is_wp_error($result)) {
+				throw new Exception('BigCommerce API error: ' . $result->get_error_message());
 			}
 
-			$bc_product_id = $result['data']['id'];
+			if (!is_array($result) || !isset($result['data']) || !isset($result['data']['id'])) {
+				throw new Exception('Unexpected response from BigCommerce when creating product: ' . json_encode($result));
+			}
 
-			// Update mapping
+			$bc_product_id = (int) $result['data']['id'];
+
+			// Update mapping for the parent
 			WC_BC_Database::update_mapping($wc_product_id, null, array(
 				'bc_product_id' => $bc_product_id,
 				'status' => 'success',
 				'message' => 'Product migrated successfully',
 			));
-
-			// Create options and variations for variable products
-			if ($product->is_type('variable')) {
-				$this->create_product_options($product, $bc_product_id);
-				$this->migrate_variations($product, $bc_product_id);
-			}
-
-			// Apply B2B pricing rules after product creation
-			$this->apply_b2b_pricing($wc_product_id, $bc_product_id);
-
-			return array('success' => true, 'bc_product_id' => $bc_product_id);
-
-		} catch (Exception $e) {
-			WC_BC_Database::update_mapping($wc_product_id, null, array(
-				'status' => 'error',
-				'message' => $e->getMessage(),
-			));
-
-			return array('error' => $e->getMessage());
 		}
+
+		// Create options and variations for variable products
+		if ($product->is_type('variable')) {
+			$this->create_product_options($product, $bc_product_id);
+			$this->migrate_variations($product, $bc_product_id);
+		}
+
+		// Apply B2B pricing rules after product creation
+		$this->apply_b2b_pricing($wc_product_id, $bc_product_id);
+
+		return array('success' => true, 'bc_product_id' => $bc_product_id);
+
+	} catch (Exception $e) {
+		WC_BC_Database::update_mapping($wc_product_id, null, array(
+			'status' => 'error',
+			'message' => $e->getMessage(),
+		));
+
+		return array('error' => $e->getMessage());
 	}
+}
 
 	/**
 	 * Create product options after product is created

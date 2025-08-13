@@ -82,6 +82,7 @@ class WC_BC_Product_Migrator {
 
 		$attributes = $product->get_variation_attributes();
 		$option_ids = array();
+		$option_value_mappings = array();
 
 		foreach ($attributes as $attribute_name => $values) {
 			$clean_name = str_replace('pa_', '', $attribute_name);
@@ -98,12 +99,48 @@ class WC_BC_Product_Migrator {
 			// Determine option type
 			$option_type = $this->determine_option_type_by_name($clean_name);
 
-			// Create option for this product
+			// Prepare option values for this attribute
+			$option_values = array();
+			$taxonomy = 'pa_' . $clean_name;
+
+			// Get all variation values actually used by this product
+			$used_values = $this->get_used_variation_values($product, $taxonomy);
+
+			foreach ($values as $value_slug) {
+				// Only include values that are actually used in variations
+				if (!empty($used_values) && !in_array($value_slug, $used_values)) {
+					continue;
+				}
+
+				$term = get_term_by('slug', $value_slug, $taxonomy);
+				if (!$term) continue;
+
+				$value_data = array(
+					'label' => $term->name,
+					'sort_order' => (int) ($term->term_order ?: 0),
+					'is_default' => false
+				);
+
+				// Add color data if it's a color attribute
+				if (strpos($clean_name, 'color') !== false || $clean_name === 'multi-color') {
+					$color = $this->get_color_value($term);
+					if ($color) {
+						$value_data['value_data'] = array(
+							'colors' => array($color)
+						);
+					}
+				}
+
+				$option_values[] = $value_data;
+			}
+
+			// Create option for this product WITH values
 			$option_data = array(
 				'product_id' => $bc_product_id,
 				'display_name' => $display_name,
 				'type' => $option_type,
-				'sort_order' => 0
+				'sort_order' => 0,
+				'option_values' => $option_values // Include values in the option creation
 			);
 
 			$response = $this->bc_api->create_product_option($bc_product_id, $option_data);
@@ -112,15 +149,47 @@ class WC_BC_Product_Migrator {
 				$option_id = $response['data']['id'];
 				$option_ids[$clean_name] = $option_id;
 
-				// Create option values
-				$this->create_option_values_for_product($clean_name, $option_id, $values, $product);
+				// Store the option value mappings from the response
+				if (isset($response['data']['option_values'])) {
+					foreach ($response['data']['option_values'] as $created_value) {
+						// Map the label to the value ID for use in variants
+						$key = $clean_name . '_' . $created_value['label'];
+						$option_value_mappings[$key] = array(
+							'id' => $created_value['id'],
+							'option_id' => $option_id,
+							'option_display_name' => $display_name,
+							'label' => $created_value['label']
+						);
+					}
+				}
 			}
 		}
 
-		// Store the option mapping for this product
+		// Store the mappings for this product
 		$this->product_option_map[$product->get_id()] = $option_ids;
+		$this->option_value_map[$product->get_id()] = $option_value_mappings;
 
 		return $option_ids;
+	}
+
+// Helper method to get used variation values
+	private function get_used_variation_values($product, $taxonomy) {
+		$used_values = array();
+		$variations = $product->get_available_variations();
+
+		foreach ($variations as $variation_data) {
+			$variation = wc_get_product($variation_data['variation_id']);
+			if ($variation) {
+				$var_attributes = $variation->get_variation_attributes();
+				foreach ($var_attributes as $var_attr_name => $var_attr_value) {
+					if (str_replace('attribute_', '', $var_attr_name) === $taxonomy && !empty($var_attr_value)) {
+						$used_values[] = $var_attr_value;
+					}
+				}
+			}
+		}
+
+		return array_unique($used_values);
 	}
 
 	/**
@@ -173,7 +242,9 @@ class WC_BC_Product_Migrator {
 			$used_values = array_unique($used_values);
 		}
 
-		foreach ($values as $value_slug) {
+		// No need to create values separately - they're included in the option creation
+		// Just map the values we'll use
+		/*foreach ($values as $value_slug) {
 			// Only create values that are actually used in variations
 			if (!empty($used_values) && !in_array($value_slug, $used_values)) {
 				continue;
@@ -198,14 +269,25 @@ class WC_BC_Product_Migrator {
 				}
 			}
 
-			$response = $this->bc_api->create_product_option_value($option_id, $value_data);
-
+			$response = $this->bc_api->create_option_value($option_id, $value_data);
 			if (isset($response['data']['id'])) {
 				$value_map[$value_slug] = $response['data']['id'];
 				// Store value mapping for this product
 				$this->option_value_map[$taxonomy . '_' . $term->term_id . '_' . $product->get_id()] = $response['data']['id'];
 			}
+		}*/
+
+		foreach ($values as $value_slug) {
+			if (!empty($used_values) && !in_array($value_slug, $used_values)) {
+				continue;
+			}
+
+			$term = get_term_by('slug', $value_slug, $taxonomy);
+			if ($term) {
+				$value_map[$value_slug] = $term->name;
+			}
 		}
+
 
 		return $value_map;
 	}
@@ -500,49 +582,6 @@ class WC_BC_Product_Migrator {
 		return $custom_fields;
 	}
 
-	/**
-	 * Prepare attributes for simple products as custom fields
-	 */
-	private function prepare_simple_product_attributes($product) {
-		$attribute_fields = array();
-		$attributes = $product->get_attributes();
-
-		foreach ($attributes as $attribute) {
-			// Skip variation attributes
-			if ($attribute->get_variation()) {
-				continue;
-			}
-
-			$options = $attribute->get_options();
-			$values = array();
-
-			// Get term names if it's a taxonomy
-			if ($attribute->is_taxonomy()) {
-				$terms = get_terms(array(
-					'taxonomy' => $attribute->get_name(),
-					'include' => $options,
-					'hide_empty' => false,
-				));
-				if (!is_wp_error($terms)) {
-					foreach ($terms as $term) {
-						$values[] = $term->name;
-					}
-				}
-			} else {
-				$values = $options;
-			}
-
-			if (!empty($values)) {
-				$attribute_fields[] = array(
-					'name' => wc_attribute_label($attribute->get_name()),
-					'value' => implode(', ', $values)
-				);
-			}
-		}
-
-		return $attribute_fields;
-	}
-
 	private function migrate_variations($product, $bc_product_id) {
 		$variations = $product->get_available_variations();
 		$success_count = 0;
@@ -559,14 +598,17 @@ class WC_BC_Product_Migrator {
 
 			$variant_weight = $this->convert_and_fix_weight($variation->get_weight() ?: $product->get_weight());
 
+			// Prepare variant data
 			$variant_data = array(
 				'sku' => $variation->get_sku() ?: 'VAR-' . $variation->get_id(),
-				'price' => (float) ($variation->get_regular_price() ?: $product->get_regular_price()),
-				'retail_price' => (float) ($variation->get_regular_price() ?: $product->get_regular_price()),
-				'weight' => (float) $variant_weight, // Now in ounces
-				'inventory_level' => (int) ($variation->get_stock_quantity() ?: 0),
-				'inventory_tracking' => $variation->get_manage_stock() ? 'variant' : 'none',
+				'option_values' => array(), // Initialize as empty array
+				'price' => (float) ($variation->get_regular_price() ?: $product->get_regular_price() ?: 0),
 			);
+
+			// Add optional fields only if they have values
+			if ($variant_weight > 0) {
+				$variant_data['weight'] = (float) $variant_weight;
+			}
 
 			// Handle variant sale price properly
 			$variant_sale_price = $variation->get_sale_price();
@@ -574,11 +616,36 @@ class WC_BC_Product_Migrator {
 				$variant_data['sale_price'] = (float) $variant_sale_price;
 			}
 
+			// Retail price
+			$retail_price = $variation->get_regular_price() ?: $product->get_regular_price();
+			if ($retail_price > 0) {
+				$variant_data['retail_price'] = (float) $retail_price;
+			}
 
-			// Prepare option values using product-specific options
+			// Inventory
+			if ($variation->get_manage_stock()) {
+				$variant_data['inventory_level'] = (int) ($variation->get_stock_quantity() ?: 0);
+				$variant_data['inventory_tracking'] = 'variant';
+			}
+
+			// Prepare option values - MUST have values
 			$option_values = $this->prepare_variant_option_values($variation, $product_options);
 			if (!empty($option_values)) {
 				$variant_data['option_values'] = $option_values;
+			} else {
+				// Skip this variant if no option values
+				$error_msg = 'No option values found for variant';
+				WC_BC_Database::update_mapping(
+					$product->get_id(),
+					$variation->get_id(),
+					array(
+						'bc_product_id' => $bc_product_id,
+						'status' => 'error',
+						'message' => $error_msg,
+					)
+				);
+				$error_count++;
+				continue;
 			}
 
 			// Add variant image if different from parent
@@ -630,6 +697,11 @@ class WC_BC_Product_Migrator {
 		$attributes = $variation->get_variation_attributes();
 		$parent_product_id = $variation->get_parent_id();
 
+		// Get the option value mappings for this product
+		$option_value_mappings = isset($this->option_value_map[$parent_product_id])
+			? $this->option_value_map[$parent_product_id]
+			: array();
+
 		foreach ($attributes as $attribute_name => $attribute_value) {
 			// Skip if no value set
 			if (empty($attribute_value)) {
@@ -645,31 +717,23 @@ class WC_BC_Product_Migrator {
 				continue;
 			}
 
-			// Get option ID from product-specific mapping
-			$option_id = isset($product_options[$clean_name]) ? (int) $product_options[$clean_name] : null;
+			// Get the term object to get proper label
+			$term = get_term_by('slug', $attribute_value, $taxonomy);
+			$label = $term ? $term->name : $attribute_value;
 
-			if ($option_id) {
-				// Get the term object to get proper label
-				$term = get_term_by('slug', $attribute_value, $taxonomy);
-				$label = $term ? $term->name : $attribute_value;
+			// Look up the option value mapping
+			$mapping_key = $clean_name . '_' . $label;
 
-				// Check if we have a mapped option value ID from this product
-				$option_value_id = isset($this->option_value_map[$taxonomy . '_' . ($term ? $term->term_id : 0) . '_' . $parent_product_id])
-					? $this->option_value_map[$taxonomy . '_' . ($term ? $term->term_id : 0) . '_' . $parent_product_id]
-					: null;
+			if (isset($option_value_mappings[$mapping_key])) {
+				$mapping = $option_value_mappings[$mapping_key];
 
-				if ($option_value_id) {
-					$option_values[] = array(
-						'option_id' => $option_id,
-						'id' => (int) $option_value_id
-					);
-				} else {
-					// Fallback to label if no ID mapping
-					$option_values[] = array(
-						'option_id' => $option_id,
-						'label' => $label
-					);
-				}
+				// Use the exact structure from BigCommerce docs
+				$option_values[] = array(
+					'option_display_name' => $mapping['option_display_name'],
+					'label' => $mapping['label'],
+					'id' => (int) $mapping['id'],
+					'option_id' => (int) $mapping['option_id']
+				);
 			}
 		}
 

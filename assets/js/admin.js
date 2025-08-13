@@ -257,8 +257,8 @@
             var b2bSetup = localStorage.getItem('wc_bc_b2b_setup') === 'true';
 
             if (!categoriesMigrated || !attributesMigrated || !b2bSetup) {
-                alert('Please complete categories, attributes, and B2B setup before migrating products.');
-                return;
+                //alert('Please complete categories, attributes, and B2B setup before migrating products.');
+                //return;
             }
 
             if (this.isRunning) return;

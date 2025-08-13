@@ -78,4 +78,34 @@ class WC_BC_Database {
 			"SELECT status, COUNT(*) as count FROM $table_name GROUP BY status"
 		);
 	}
+
+
+
+// Add these methods to your WC_BC_Database class
+
+	/**
+	 * Get pending parent products only (not variations)
+	 */
+	public static function get_pending_parent_products( $limit = 10 ) {
+		global $wpdb;
+		$table_name = $wpdb->prefix . WC_BC_MIGRATOR_TABLE;
+
+		return $wpdb->get_results( $wpdb->prepare(
+			"SELECT * FROM $table_name WHERE status = 'pending' AND wc_variation_id IS NULL ORDER BY id ASC LIMIT %d",
+			$limit
+		) );
+	}
+
+	/**
+	 * Get error parent products only (not variations)
+	 */
+	public static function get_error_parent_products( $limit = 10 ) {
+		global $wpdb;
+		$table_name = $wpdb->prefix . WC_BC_MIGRATOR_TABLE;
+
+		return $wpdb->get_results( $wpdb->prepare(
+			"SELECT * FROM $table_name WHERE status = 'error' AND wc_variation_id IS NULL ORDER BY id ASC LIMIT %d",
+			$limit
+		) );
+	}
 }

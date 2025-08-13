@@ -91,7 +91,8 @@ class WC_BC_Batch_Processor {
 	}
 
 	public function process_batch($batch_size = 10) {
-		$pending_products = WC_BC_Database::get_pending_products($batch_size);
+		// Get pending parent products only (variations are handled within the migrate_product method)
+		$pending_products = WC_BC_Database::get_pending_parent_products($batch_size);
 
 		if (empty($pending_products)) {
 			return array(
@@ -106,16 +107,19 @@ class WC_BC_Batch_Processor {
 		$errors = 0;
 
 		foreach ($pending_products as $mapping) {
-			// Only migrate parent products (variations are handled within)
-			if (!$mapping->wc_variation_id) {
-				$result = $migrator->migrate_product($mapping->wc_product_id);
+			// Migrate the product (this handles both simple and variable products with their variations)
+			$result = $migrator->migrate_product($mapping->wc_product_id);
 
-				if (isset($result['error'])) {
-					$errors++;
-				} else {
-					$processed++;
-				}
+			if (isset($result['error'])) {
+				error_log("Migration error for product {$mapping->wc_product_id}: " . $result['error']);
+				$errors++;
+			} else {
+				$processed++;
+				error_log("Successfully migrated product {$mapping->wc_product_id} to BC ID: " . $result['bc_product_id']);
 			}
+
+			// Add a small delay to avoid API rate limits
+			usleep(500000); // 0.5 seconds
 		}
 
 		return array(
@@ -130,8 +134,8 @@ class WC_BC_Batch_Processor {
 		global $wpdb;
 		$table_name = $wpdb->prefix . WC_BC_MIGRATOR_TABLE;
 
-		// Reset error products to pending
-		$error_products = WC_BC_Database::get_error_products($batch_size);
+		// Reset error products to pending (parent products only)
+		$error_products = WC_BC_Database::get_error_parent_products($batch_size);
 
 		foreach ($error_products as $product) {
 			$wpdb->update(
@@ -150,7 +154,41 @@ class WC_BC_Batch_Processor {
 		$table_name = $wpdb->prefix . WC_BC_MIGRATOR_TABLE;
 
 		return $wpdb->get_var(
-			"SELECT COUNT(*) FROM $table_name WHERE status = 'pending'"
+			"SELECT COUNT(*) FROM $table_name WHERE status = 'pending' AND wc_variation_id IS NULL"
 		);
+	}
+
+	/**
+	 * Get migration status summary
+	 */
+	public function get_migration_status() {
+		global $wpdb;
+		$table_name = $wpdb->prefix . WC_BC_MIGRATOR_TABLE;
+
+		$status = array(
+			'total_products' => $wpdb->get_var("SELECT COUNT(DISTINCT wc_product_id) FROM $table_name WHERE wc_variation_id IS NULL"),
+			'pending_products' => $wpdb->get_var("SELECT COUNT(*) FROM $table_name WHERE status = 'pending' AND wc_variation_id IS NULL"),
+			'success_products' => $wpdb->get_var("SELECT COUNT(*) FROM $table_name WHERE status = 'success' AND wc_variation_id IS NULL"),
+			'error_products' => $wpdb->get_var("SELECT COUNT(*) FROM $table_name WHERE status = 'error' AND wc_variation_id IS NULL"),
+			'total_variations' => $wpdb->get_var("SELECT COUNT(*) FROM $table_name WHERE wc_variation_id IS NOT NULL"),
+			'pending_variations' => $wpdb->get_var("SELECT COUNT(*) FROM $table_name WHERE status = 'pending' AND wc_variation_id IS NOT NULL"),
+			'success_variations' => $wpdb->get_var("SELECT COUNT(*) FROM $table_name WHERE status = 'success' AND wc_variation_id IS NOT NULL"),
+			'error_variations' => $wpdb->get_var("SELECT COUNT(*) FROM $table_name WHERE status = 'error' AND wc_variation_id IS NOT NULL"),
+		);
+
+		return $status;
+	}
+
+	/**
+	 * Get recent errors for debugging
+	 */
+	public function get_recent_errors($limit = 10) {
+		global $wpdb;
+		$table_name = $wpdb->prefix . WC_BC_MIGRATOR_TABLE;
+
+		return $wpdb->get_results($wpdb->prepare(
+			"SELECT * FROM $table_name WHERE status = 'error' ORDER BY updated_at DESC LIMIT %d",
+			$limit
+		));
 	}
 }

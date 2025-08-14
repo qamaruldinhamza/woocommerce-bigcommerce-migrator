@@ -50,6 +50,9 @@ class WC_BC_Product_Migrator {
 					'message' => 'Product already migrated',
 				));
 
+				// ADD THIS LINE HERE:
+				$this->check_and_update_existing_variations($wc_product_id);
+
 				// Handle variations if it's a variable product
 				if ($product->is_type('variable')) {
 					$this->create_product_options($product, $existing_bc_id);
@@ -896,6 +899,69 @@ class WC_BC_Product_Migrator {
 			"SELECT bc_product_id FROM $table_name WHERE wc_product_id = %d AND wc_variation_id IS NULL AND bc_product_id IS NOT NULL",
 			$wc_product_id
 		));
+	}
+
+	/**
+	 * Check if variation already exists in BigCommerce and update status
+	 */
+	private function check_and_update_existing_variations($wc_product_id) {
+		global $wpdb;
+		$table_name = $wpdb->prefix . WC_BC_MIGRATOR_TABLE;
+
+		// Get all pending items (products and variations) with bc_product_id or bc_variation_id
+		$pending_items = $wpdb->get_results($wpdb->prepare(
+			"SELECT * FROM $table_name 
+         WHERE wc_product_id = %d 
+         AND (bc_product_id IS NOT NULL OR bc_variation_id IS NOT NULL)
+         AND status = 'pending'",
+			$wc_product_id
+		));
+
+		foreach ($pending_items as $item_mapping) {
+			try {
+				if ($item_mapping->wc_variation_id === NULL && $item_mapping->bc_product_id) {
+					// This is a main product, check if it exists
+					$bc_product = $this->bc_api->get_product($item_mapping->bc_product_id);
+
+					if (isset($bc_product['data']['id'])) {
+						// Product exists, update status to success
+						WC_BC_Database::update_mapping(
+							$item_mapping->wc_product_id,
+							null,
+							array(
+								'status' => 'success',
+								'message' => 'Product already migrated and verified in BigCommerce',
+							)
+						);
+
+						error_log("Updated existing product status for WC Product {$wc_product_id}, BC Product {$item_mapping->bc_product_id}");
+					}
+				} elseif ($item_mapping->wc_variation_id && $item_mapping->bc_variation_id && $item_mapping->bc_product_id) {
+					// This is a variation, check if it exists
+					$bc_variation = $this->bc_api->get_product_variant(
+						$item_mapping->bc_product_id,
+						$item_mapping->bc_variation_id
+					);
+
+					if (isset($bc_variation['data']['id'])) {
+						// Variation exists, update status to success
+						WC_BC_Database::update_mapping(
+							$item_mapping->wc_product_id,
+							$item_mapping->wc_variation_id,
+							array(
+								'status' => 'success',
+								'message' => 'Variation already migrated and verified in BigCommerce',
+							)
+						);
+
+						error_log("Updated existing variation status for WC Product {$wc_product_id}, Variation {$item_mapping->wc_variation_id}, BC Variation {$item_mapping->bc_variation_id}");
+					}
+				}
+			} catch (Exception $e) {
+				// If item doesn't exist or API error, leave status as pending
+				error_log("Could not verify item Product ID: {$item_mapping->bc_product_id}, Variation ID: {$item_mapping->bc_variation_id}: " . $e->getMessage());
+			}
+		}
 	}
 
 

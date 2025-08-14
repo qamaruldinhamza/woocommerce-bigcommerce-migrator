@@ -199,4 +199,20 @@ class WC_BC_BigCommerce_API {
 
 		return $base_url;
 	}
+
+	/**
+	 * Get a specific product from BigCommerce
+	 */
+	public function get_product($product_id) {
+		$endpoint = "/catalog/products/{$product_id}";
+		return $this->make_request('GET', $this->api_url . $endpoint);
+	}
+
+	/**
+	 * Get a specific product variant from BigCommerce
+	 */
+	public function get_product_variant($product_id, $variant_id) {
+		$endpoint = "/catalog/products/{$product_id}/variants/{$variant_id}";
+		return $this->make_request('GET', $this->api_url . $endpoint);
+	}
 }

@@ -102,9 +102,17 @@ class WC_BC_Product_Migrator {
 				if (strpos($result['error'], 'duplicate') !== false && strpos($result['error'], 'name') !== false) {
 					error_log("Duplicate name detected for product {$wc_product_id}, generating new unique name");
 
+					if (rand(0, 1) === 0) {
+						// Add 1–5 dots
+						$original_name .= ' ' . str_repeat('.', rand(1, 5));
+					} else {
+						// Add 1–5 dashes
+						$original_name .= ' ' . str_repeat('-', rand(1, 5));
+					}
+
 					// Generate a more unique name and retry
 					$product_data['name'] = $this->ensure_unique_product_name(
-						$original_name . ' - ..',
+						$original_name,
 						$wc_product_id,
 						$product_data['sku']
 					);

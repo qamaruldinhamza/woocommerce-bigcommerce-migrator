@@ -103,7 +103,7 @@ class WC_BC_Product_Migrator {
 					error_log("Duplicate name detected for product {$wc_product_id}, generating new unique name");
 
 					if (rand(0, 1) === 0){
-						$original_name .= ' '.$product_data['sku'];
+						$original_name .= ' ('.$product_data['sku'].')';
 					}else{
 						if (rand(0, 1) === 0) {
 							// Add 1–5 dots

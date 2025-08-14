@@ -104,7 +104,7 @@ class WC_BC_Product_Migrator {
 
 					// Generate a more unique name and retry
 					$product_data['name'] = $this->ensure_unique_product_name(
-						$original_name . ' - Retry',
+						$original_name . ' - ..',
 						$wc_product_id,
 						$product_data['sku']
 					);

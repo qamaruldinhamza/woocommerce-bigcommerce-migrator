@@ -149,4 +149,54 @@ class WC_BC_BigCommerce_API {
 	public function get_product_options($product_id) {
 		return $this->make_request("catalog/products/{$product_id}/options");
 	}
+
+	// Add these methods to your WC_BC_BigCommerce_API class
+
+	/**
+	 * Get products from BigCommerce with pagination
+	 */
+	public function get_products($page = 1, $limit = 250) {
+		$endpoint = '/catalog/products';
+
+		$params = array(
+			'page' => $page,
+			'limit' => min($limit, 250), // BigCommerce max is 250
+			'include' => 'variants,images' // Include what we need
+		);
+
+		$url = $this->build_url($endpoint, $params);
+
+		return $this->make_request('GET', $url);
+	}
+
+	/**
+	 * Search for products by name in BigCommerce
+	 */
+	public function search_products_by_name($product_name) {
+		$endpoint = '/catalog/products';
+
+		// Use keyword search which searches product names
+		$params = array(
+			'keyword' => urlencode(trim($product_name)),
+			'limit' => 50, // Check more results to ensure accuracy
+			'include' => 'variants' // Include variants if needed
+		);
+
+		$url = $this->build_url($endpoint, $params);
+
+		return $this->make_request('GET', $url);
+	}
+
+	/**
+	 * Helper method to build URL with query parameters
+	 */
+	private function build_url($endpoint, $params = array()) {
+		$base_url = $this->api_url . $endpoint;
+
+		if (!empty($params)) {
+			$base_url .= '?' . http_build_query($params);
+		}
+
+		return $base_url;
+	}
 }

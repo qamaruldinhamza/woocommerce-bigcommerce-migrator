@@ -9,6 +9,11 @@ class WC_BC_Product_Migrator {
 	private $product_option_map = array();
 	private $option_value_map = array();
 
+	// Cache properties for duplicate name checking
+	private $bc_product_names_cache = array();
+	private $bc_product_skus_cache = array();
+	private $cache_loaded = false;
+
 	// Define attributes that should be custom fields, not options
 	private $non_variant_attributes = array('metal', 'metal-style', 'stone-type', 'cameo', 'handmade', 'non-amber-gemstone');
 
@@ -35,14 +40,40 @@ class WC_BC_Product_Migrator {
 		}
 
 		try {
+			// Check if product is already migrated
+			$existing_bc_id = $this->get_bc_product_id($wc_product_id);
+			if ($existing_bc_id) {
+				// Product already exists, update mapping status and proceed with variations
+				WC_BC_Database::update_mapping($wc_product_id, null, array(
+					'bc_product_id' => $existing_bc_id,
+					'status' => 'success',
+					'message' => 'Product already migrated',
+				));
+
+				// Handle variations if it's a variable product
+				if ($product->is_type('variable')) {
+					$this->create_product_options($product, $existing_bc_id);
+					$this->migrate_variations($product, $existing_bc_id);
+				}
+
+				return array('success' => true, 'bc_product_id' => $existing_bc_id, 'already_exists' => true);
+			}
+
 			// Prepare product data
 			$product_data = $this->prepare_product_data($product);
+
+			// Ensure unique product name
+			$original_name = $product_data['name'];
+			$product_data['name'] = $this->ensure_unique_product_name(
+				$product_data['name'],
+				$wc_product_id,
+				$product_data['sku']
+			);
 
 			// Final validation of all custom fields
 			if (isset($product_data['custom_fields'])) {
 				$validated_fields = array();
 				foreach ($product_data['custom_fields'] as $field) {
-					// Double-check field validity
 					if (!empty($field['value']) && strlen($field['value']) <= 250 && strlen($field['value']) >= 1) {
 						$validated_fields[] = $field;
 					} else {
@@ -67,11 +98,28 @@ class WC_BC_Product_Migrator {
 			}
 
 			if (isset($result['error'])) {
-				$error_details = '';
-				if (isset($result['details'])) {
-					$error_details = ' - Details: ' . json_encode($result['details']);
+				// Handle specific duplicate name error with retry
+				if (strpos($result['error'], 'duplicate') !== false && strpos($result['error'], 'name') !== false) {
+					error_log("Duplicate name detected for product {$wc_product_id}, generating new unique name");
+
+					// Generate a more unique name and retry
+					$product_data['name'] = $this->ensure_unique_product_name(
+						$original_name . ' - Retry',
+						$wc_product_id,
+						$product_data['sku']
+					);
+
+					// Retry the creation
+					$result = $this->bc_api->create_product($product_data);
+
+					if (isset($result['error'])) {
+						$error_details = isset($result['details']) ? ' - Details: ' . json_encode($result['details']) : '';
+						throw new Exception($result['error'] . $error_details);
+					}
+				} else {
+					$error_details = isset($result['details']) ? ' - Details: ' . json_encode($result['details']) : '';
+					throw new Exception($result['error'] . $error_details);
 				}
-				throw new Exception($result['error'] . $error_details);
 			}
 
 			if (!isset($result['data']['id'])) {
@@ -81,11 +129,18 @@ class WC_BC_Product_Migrator {
 			$bc_product_id = $result['data']['id'];
 
 			// Update mapping
-			WC_BC_Database::update_mapping($wc_product_id, null, array(
+			$update_data = array(
 				'bc_product_id' => $bc_product_id,
 				'status' => 'success',
 				'message' => 'Product migrated successfully',
-			));
+			);
+
+			// Add note if name was changed
+			if ($product_data['name'] !== $original_name) {
+				$update_data['message'] .= ' (Name changed from "' . $original_name . '" to "' . $product_data['name'] . '")';
+			}
+
+			WC_BC_Database::update_mapping($wc_product_id, null, $update_data);
 
 			// Create options and variations for variable products
 			if ($product->is_type('variable')) {
@@ -96,7 +151,12 @@ class WC_BC_Product_Migrator {
 			// Apply B2B pricing rules after product creation
 			$this->apply_b2b_pricing($wc_product_id, $bc_product_id);
 
-			return array('success' => true, 'bc_product_id' => $bc_product_id);
+			return array(
+				'success' => true,
+				'bc_product_id' => $bc_product_id,
+				'name_changed' => $product_data['name'] !== $original_name,
+				'final_name' => $product_data['name']
+			);
 
 		} catch (Exception $e) {
 			$error_message = $e->getMessage();
@@ -112,6 +172,7 @@ class WC_BC_Product_Migrator {
 			return array('error' => $error_message);
 		}
 	}
+
 
 	/**
 	 * Create product options after product is created
@@ -820,7 +881,7 @@ class WC_BC_Product_Migrator {
 		$table_name = $wpdb->prefix . WC_BC_MIGRATOR_TABLE;
 
 		return $wpdb->get_var($wpdb->prepare(
-			"SELECT bc_product_id FROM $table_name WHERE wc_product_id = %d AND wc_variation_id IS NULL",
+			"SELECT bc_product_id FROM $table_name WHERE wc_product_id = %d AND wc_variation_id IS NULL AND bc_product_id IS NOT NULL",
 			$wc_product_id
 		));
 	}
@@ -1025,4 +1086,224 @@ class WC_BC_Product_Migrator {
 
 		return $fields;
 	}
+
+	/**
+	 * Generate elegant unique product name using SKU and subtle visual elements
+	 */
+	private function ensure_unique_product_name($product_name, $product_id, $sku = '') {
+		$original_name = $product_name;
+		$attempt = 0;
+		$max_attempts = 20;
+
+		// Clean the SKU for display (remove special characters, keep alphanumeric and dashes)
+		$clean_sku = '';
+		if (!empty($sku)) {
+			$clean_sku = preg_replace('/[^a-zA-Z0-9\-]/', '', $sku);
+		}
+
+		while ($attempt < $max_attempts) {
+			// Check if current name exists
+			if (!$this->product_name_exists_in_bc($product_name)) {
+				// Update our cache with the new name
+				$this->bc_product_names_cache[strtolower(trim($product_name))] = 'pending_' . $product_id;
+
+				if ($attempt > 0) {
+					error_log("Generated unique name for product {$product_id}: '{$original_name}' -> '{$product_name}'");
+				}
+				return $product_name;
+			}
+
+			$attempt++;
+
+			// Elegant naming strategies - customer-friendly
+			if ($attempt == 1 && !empty($clean_sku)) {
+				// Strategy 1: Add SKU in parentheses (most professional)
+				$product_name = $original_name . ' (' . $clean_sku . ')';
+
+			} elseif ($attempt == 2 && !empty($clean_sku)) {
+				// Strategy 2: Add SKU with dash (clean separation)
+				$product_name = $original_name . ' - ' . $clean_sku;
+
+			} elseif ($attempt == 3) {
+				// Strategy 3: Add single dot (very subtle)
+				$product_name = $original_name . '.';
+
+			} elseif ($attempt == 4) {
+				// Strategy 4: Add double dots (still subtle)
+				$product_name = $original_name . '..';
+
+			} elseif ($attempt == 5) {
+				// Strategy 5: Add triple dots (ellipsis style)
+				$product_name = $original_name . '...';
+
+			} elseif ($attempt == 6 && !empty($clean_sku)) {
+				// Strategy 6: SKU at the beginning with dash
+				$product_name = $clean_sku . ' - ' . $original_name;
+
+			} elseif ($attempt == 7 && !empty($clean_sku)) {
+				// Strategy 7: SKU with single dot
+				$product_name = $original_name . ' (' . $clean_sku . ').';
+
+			} elseif ($attempt == 8) {
+				// Strategy 8: Add space and single dot
+				$product_name = $original_name . ' .';
+
+			} elseif ($attempt == 9) {
+				// Strategy 9: Add space and double dots
+				$product_name = $original_name . ' ..';
+
+			} elseif ($attempt == 10) {
+				// Strategy 10: Add space and triple dots
+				$product_name = $original_name . ' ...';
+
+			} elseif ($attempt == 11 && !empty($clean_sku)) {
+				// Strategy 11: SKU in brackets
+				$product_name = $original_name . ' [' . $clean_sku . ']';
+
+			} elseif ($attempt == 12 && !empty($clean_sku)) {
+				// Strategy 12: SKU with dots
+				$product_name = $original_name . ' ' . $clean_sku . '.';
+
+			} elseif ($attempt == 13 && !empty($clean_sku)) {
+				// Strategy 13: SKU with double dots
+				$product_name = $original_name . ' ' . $clean_sku . '..';
+
+			} elseif ($attempt == 14) {
+				// Strategy 14: Four dots (getting more unique)
+				$product_name = $original_name . '....';
+
+			} elseif ($attempt == 15) {
+				// Strategy 15: Five dots
+				$product_name = $original_name . '.....';
+
+			} elseif ($attempt == 16 && !empty($clean_sku)) {
+				// Strategy 16: Reverse order with dots
+				$product_name = $clean_sku . ' ' . $original_name . '.';
+
+			} elseif ($attempt == 17) {
+				// Strategy 17: Mix of spaces and dots
+				$product_name = $original_name . ' . .';
+
+			} elseif ($attempt == 18) {
+				// Strategy 18: Different dot pattern
+				$product_name = $original_name . ' .. .';
+
+			} else {
+				// Strategy 19-20: Add a very short, clean suffix
+				$clean_suffix = substr(str_shuffle('ABCDEFGHIJKLMNOPQRSTUVWXYZ'), 0, 2);
+				$product_name = $original_name . ' ' . $clean_suffix;
+			}
+
+			// Ensure name doesn't exceed BigCommerce limit (250 characters)
+			if (strlen($product_name) > 250) {
+				if (!empty($clean_sku) && strlen($clean_sku) < 50) {
+					// Truncate original name and add SKU
+					$available_length = 250 - strlen(' (' . $clean_sku . ')');
+					$truncated_original = substr($original_name, 0, $available_length);
+					$product_name = $truncated_original . ' (' . $clean_sku . ')';
+				} else {
+					// Just truncate and add dots
+					$product_name = substr($original_name, 0, 247) . '...';
+				}
+			}
+		}
+
+		// Final fallback - use a clean 2-letter suffix
+		$clean_suffix = substr(str_shuffle('ABCDEFGHIJKLMNOPQRSTUVWXYZ'), 0, 2);
+		$max_base_length = 250 - 3; // 3 for " XX"
+		$truncated_base = substr($original_name, 0, $max_base_length);
+		$final_name = $truncated_base . ' ' . $clean_suffix;
+
+		error_log("Generated fallback unique name for product {$product_id}: {$final_name}");
+
+		// Update cache with final name
+		$this->bc_product_names_cache[strtolower(trim($final_name))] = 'pending_' . $product_id;
+
+		return $final_name;
+	}
+
+
+	/**
+	 * Load existing BigCommerce product names and SKUs into cache
+	 */
+	private function load_bc_products_cache() {
+		if ($this->cache_loaded) {
+			return;
+		}
+
+		try {
+			$page = 1;
+			$limit = 250; // Max allowed by BigCommerce
+
+			do {
+				$result = $this->bc_api->get_products($page, $limit);
+
+				if (isset($result['data']) && is_array($result['data'])) {
+					foreach ($result['data'] as $product) {
+						if (isset($product['name'])) {
+							$this->bc_product_names_cache[strtolower(trim($product['name']))] = $product['id'];
+						}
+						if (isset($product['sku']) && !empty($product['sku'])) {
+							$this->bc_product_skus_cache[strtolower(trim($product['sku']))] = $product['id'];
+						}
+					}
+				}
+
+				$page++;
+
+				// Check if there are more pages
+				$has_more = isset($result['meta']['pagination']['links']['next']);
+
+			} while ($has_more);
+
+			$this->cache_loaded = true;
+			error_log("Loaded " . count($this->bc_product_names_cache) . " product names and " . count($this->bc_product_skus_cache) . " SKUs into cache");
+
+		} catch (Exception $e) {
+			error_log("Failed to load BigCommerce products cache: " . $e->getMessage());
+			// Continue without cache - will use API calls instead
+		}
+	}
+
+	/**
+	 * Enhanced product name existence check with cache
+	 */
+	private function product_name_exists_in_bc($product_name) {
+		// Load cache if not already loaded
+		$this->load_bc_products_cache();
+
+		$name_key = strtolower(trim($product_name));
+
+		// Check cache first
+		if (isset($this->bc_product_names_cache[$name_key])) {
+			return true;
+		}
+
+		// If not in cache and cache is loaded, it doesn't exist
+		if ($this->cache_loaded) {
+			return false;
+		}
+
+		// Fallback to API search if cache failed to load
+		try {
+			$search_result = $this->bc_api->search_products_by_name($product_name);
+
+			if (isset($search_result['data']) && !empty($search_result['data'])) {
+				foreach ($search_result['data'] as $bc_product) {
+					if (isset($bc_product['name']) && strtolower(trim($bc_product['name'])) === $name_key) {
+						return true;
+					}
+				}
+			}
+
+			return false;
+
+		} catch (Exception $e) {
+			error_log("Error checking product name existence: " . $e->getMessage());
+			return false;
+		}
+	}
+
+
+
 }

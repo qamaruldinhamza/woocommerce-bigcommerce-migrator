@@ -24,6 +24,9 @@ class WC_BC_Product_Migrator {
 		$this->category_map = get_option('wc_bc_category_mapping', array());
 	}
 
+	/**
+	 * Enhanced migrate product method with final validation
+	 */
 	public function migrate_product($wc_product_id) {
 		$product = wc_get_product($wc_product_id);
 
@@ -35,11 +38,44 @@ class WC_BC_Product_Migrator {
 			// Prepare product data
 			$product_data = $this->prepare_product_data($product);
 
+			// Final validation of all custom fields
+			if (isset($product_data['custom_fields'])) {
+				$validated_fields = array();
+				foreach ($product_data['custom_fields'] as $field) {
+					// Double-check field validity
+					if (!empty($field['value']) && strlen($field['value']) <= 250 && strlen($field['value']) >= 1) {
+						$validated_fields[] = $field;
+					} else {
+						error_log("Skipping invalid custom field for product {$wc_product_id}: " . json_encode($field));
+					}
+				}
+				$product_data['custom_fields'] = $validated_fields;
+			}
+
+			// Log the custom fields count for monitoring
+			$custom_field_count = isset($product_data['custom_fields']) ? count($product_data['custom_fields']) : 0;
+			if ($custom_field_count > 10) {
+				error_log("Product {$wc_product_id} has {$custom_field_count} custom fields - may need optimization");
+			}
+
 			// Create product in BigCommerce
 			$result = $this->bc_api->create_product($product_data);
 
+			// Better error handling
+			if (is_wp_error($result)) {
+				throw new Exception('BigCommerce API error: ' . $result->get_error_message());
+			}
+
 			if (isset($result['error'])) {
-				throw new Exception($result['error'] . ' - ' . json_encode($result));
+				$error_details = '';
+				if (isset($result['details'])) {
+					$error_details = ' - Details: ' . json_encode($result['details']);
+				}
+				throw new Exception($result['error'] . $error_details);
+			}
+
+			if (!isset($result['data']['id'])) {
+				throw new Exception('Unexpected response from BigCommerce: ' . json_encode($result));
 			}
 
 			$bc_product_id = $result['data']['id'];
@@ -63,12 +99,17 @@ class WC_BC_Product_Migrator {
 			return array('success' => true, 'bc_product_id' => $bc_product_id);
 
 		} catch (Exception $e) {
+			$error_message = $e->getMessage();
+
+			// Log detailed error for debugging
+			error_log("Migration error for product {$wc_product_id}: {$error_message}");
+
 			WC_BC_Database::update_mapping($wc_product_id, null, array(
 				'status' => 'error',
-				'message' => $e->getMessage(),
+				'message' => $error_message,
 			));
 
-			return array('error' => $e->getMessage());
+			return array('error' => $error_message);
 		}
 	}
 
@@ -242,41 +283,6 @@ class WC_BC_Product_Migrator {
 			$used_values = array_unique($used_values);
 		}
 
-		// No need to create values separately - they're included in the option creation
-		// Just map the values we'll use
-		/*foreach ($values as $value_slug) {
-			// Only create values that are actually used in variations
-			if (!empty($used_values) && !in_array($value_slug, $used_values)) {
-				continue;
-			}
-
-			$term = get_term_by('slug', $value_slug, $taxonomy);
-			if (!$term) continue;
-
-			$value_data = array(
-				'label' => $term->name,
-				'sort_order' => (int) ($term->term_order ?: 0),
-				'is_default' => false
-			);
-
-			// Add color data if it's a color attribute
-			if (strpos($attribute_name, 'color') !== false || $attribute_name === 'multi-color') {
-				$color = $this->get_color_value($term);
-				if ($color) {
-					$value_data['value_data'] = array(
-						'colors' => array($color)
-					);
-				}
-			}
-
-			$response = $this->bc_api->create_option_value($option_id, $value_data);
-			if (isset($response['data']['id'])) {
-				$value_map[$value_slug] = $response['data']['id'];
-				// Store value mapping for this product
-				$this->option_value_map[$taxonomy . '_' . $term->term_id . '_' . $product->get_id()] = $response['data']['id'];
-			}
-		}*/
-
 		foreach ($values as $value_slug) {
 			if (!empty($used_values) && !in_array($value_slug, $used_values)) {
 				continue;
@@ -368,7 +374,7 @@ class WC_BC_Product_Migrator {
 	}
 
 	/**
-	 * Prepare attributes for all products as custom fields
+	 * Prepare attributes for all products as custom fields with smart splitting
 	 */
 	private function prepare_product_attributes_as_custom_fields($product) {
 		$attribute_fields = array();
@@ -393,23 +399,25 @@ class WC_BC_Product_Migrator {
 						'include' => $options,
 						'hide_empty' => false,
 					));
-					if (!is_wp_error($terms)) {
+					if (!is_wp_error($terms) && !empty($terms)) {
 						foreach ($terms as $term) {
 							$values[] = $term->name;
 						}
 					}
 				} else {
-					$values = $options;
+					$values = is_array($options) ? $options : array();
 				}
 
 				if (!empty($values)) {
 					// Use proper attribute label
 					$label = wc_attribute_label($attribute->get_name());
+					$value_string = implode(', ', $values);
 
-					$attribute_fields[] = array(
-						'name' => $label,
-						'value' => implode(', ', $values)
-					);
+					// Create chunked fields for this attribute
+					if (!empty(trim($value_string))) {
+						$attr_fields = $this->create_chunked_custom_fields($label, $value_string);
+						$attribute_fields = array_merge($attribute_fields, $attr_fields);
+					}
 				}
 			}
 		}
@@ -546,6 +554,9 @@ class WC_BC_Product_Migrator {
 		return $seo_fields;
 	}
 
+	/**
+	 * Enhanced prepare_custom_fields with better validation
+	 */
 	private function prepare_custom_fields($product) {
 		$custom_fields = array();
 
@@ -555,29 +566,27 @@ class WC_BC_Product_Migrator {
 			'value' => (string) $product->get_id()
 		);
 
-		// Add product tags as custom field
+		// Add product tags as custom field with smart splitting
 		$tags = wp_get_post_terms($product->get_id(), 'product_tag', array('fields' => 'names'));
-		if (!empty($tags)) {
-			$custom_fields[] = array(
-				'name' => 'product_tags',
-				'value' => implode(', ', $tags)
-			);
+		if (!empty($tags) && is_array($tags) && !is_wp_error($tags)) {
+			$tags_string = implode(', ', $tags);
+			$tag_fields = $this->create_chunked_custom_fields('product_tags', $tags_string);
+			$custom_fields = array_merge($custom_fields, $tag_fields);
 		}
 
-		// Add short description if exists
+		// Add short description with smart splitting
 		$short_description = $product->get_short_description();
 		if ($short_description) {
-			$custom_fields[] = array(
-				'name' => 'short_description',
-				'value' => strip_tags($short_description)
-			);
+			$clean_description = strip_tags($short_description);
+			if (!empty(trim($clean_description))) {
+				$desc_fields = $this->create_chunked_custom_fields('short_description', $clean_description);
+				$custom_fields = array_merge($custom_fields, $desc_fields);
+			}
 		}
 
-		// Add all product attributes as custom fields
+		// Add all product attributes as custom fields with smart splitting
 		$attribute_fields = $this->prepare_product_attributes_as_custom_fields($product);
-		if (!empty($attribute_fields)) {
-			$custom_fields = array_merge($custom_fields, $attribute_fields);
-		}
+		$custom_fields = array_merge($custom_fields, $attribute_fields);
 
 		return $custom_fields;
 	}
@@ -751,7 +760,7 @@ class WC_BC_Product_Migrator {
 	}
 
 	/**
-	 * Prepare related products (cross-sells and up-sells)
+	 * Prepare related products (cross-sells and up-sells) with length validation
 	 */
 	private function prepare_related_products($product) {
 		$related_fields = array();
@@ -767,16 +776,14 @@ class WC_BC_Product_Migrator {
 						$cross_sell_skus[] = $cross_sell_product->get_sku();
 					}
 				} catch (Exception $e) {
-					// Skip if product doesn't exist
 					continue;
 				}
 			}
 
 			if (!empty($cross_sell_skus)) {
-				$related_fields[] = array(
-					'name' => 'cross_sell_products',
-					'value' => implode(',', $cross_sell_skus)
-				);
+				$cross_sells_string = implode(',', $cross_sell_skus);
+				$cross_sell_fields = $this->create_chunked_custom_fields('cross_sell_products', $cross_sells_string, true);
+				$related_fields = array_merge($related_fields, $cross_sell_fields);
 			}
 		}
 
@@ -791,16 +798,14 @@ class WC_BC_Product_Migrator {
 						$upsell_skus[] = $upsell_product->get_sku();
 					}
 				} catch (Exception $e) {
-					// Skip if product doesn't exist
 					continue;
 				}
 			}
 
 			if (!empty($upsell_skus)) {
-				$related_fields[] = array(
-					'name' => 'upsell_products',
-					'value' => implode(',', $upsell_skus)
-				);
+				$upsells_string = implode(',', $upsell_skus);
+				$upsell_fields = $this->create_chunked_custom_fields('upsell_products', $upsells_string, true);
+				$related_fields = array_merge($related_fields, $upsell_fields);
 			}
 		}
 
@@ -872,5 +877,152 @@ class WC_BC_Product_Migrator {
 		// Remove any non-numeric characters except decimal point
 		$value = preg_replace('/[^0-9.]/', '', $value);
 		return (float) $value;
+	}
+
+
+	/**
+	 * Smart text splitting that respects word boundaries and punctuation
+	 */
+	private function smart_split_text($text, $max_length = 250) {
+		$chunks = array();
+		$remaining_text = trim($text);
+
+		// If text is already within limit, return as single chunk
+		if (strlen($remaining_text) <= $max_length) {
+			return array($remaining_text);
+		}
+
+		while (strlen($remaining_text) > $max_length) {
+			$chunk = substr($remaining_text, 0, $max_length);
+
+			// Find the last space, comma, period, or semicolon within the limit
+			$break_positions = array();
+			$break_positions[] = strrpos($chunk, ' ');
+			$break_positions[] = strrpos($chunk, '.');
+			$break_positions[] = strrpos($chunk, ',');
+			$break_positions[] = strrpos($chunk, ';');
+			$break_positions[] = strrpos($chunk, '!');
+			$break_positions[] = strrpos($chunk, '?');
+
+			// Remove false values and find the maximum position
+			$break_positions = array_filter($break_positions, function($pos) { return $pos !== false; });
+
+			if (!empty($break_positions)) {
+				$break_pos = max($break_positions);
+				// Make sure we don't break at position 0
+				if ($break_pos > 0) {
+					$chunk = substr($remaining_text, 0, $break_pos);
+					$remaining_text = ltrim(substr($remaining_text, $break_pos));
+				} else {
+					// No good break point found, force break at max length
+					$chunk = substr($remaining_text, 0, $max_length);
+					$remaining_text = substr($remaining_text, $max_length);
+				}
+			} else {
+				// No good break point found, force break at max length
+				$chunk = substr($remaining_text, 0, $max_length);
+				$remaining_text = substr($remaining_text, $max_length);
+			}
+
+			$chunk = trim($chunk);
+			if (!empty($chunk)) {
+				$chunks[] = $chunk;
+			}
+		}
+
+		// Add the remaining text if any
+		$remaining_text = trim($remaining_text);
+		if (!empty($remaining_text)) {
+			$chunks[] = $remaining_text;
+		}
+
+		return $chunks;
+	}
+
+	/**
+	 * Smart SKU splitting that keeps complete SKUs together
+	 */
+	private function smart_split_skus($skus_array, $max_length = 250) {
+		$chunks = array();
+		$current_chunk = '';
+
+		// Ensure we have an array and clean the SKUs
+		if (!is_array($skus_array)) {
+			return $chunks;
+		}
+
+		foreach ($skus_array as $sku) {
+			$sku = trim($sku);
+
+			// Skip empty SKUs
+			if (empty($sku)) {
+				continue;
+			}
+
+			$test_chunk = empty($current_chunk) ? $sku : $current_chunk . ',' . $sku;
+
+			if (strlen($test_chunk) <= $max_length) {
+				$current_chunk = $test_chunk;
+			} else {
+				// Current chunk would exceed limit, save it and start new chunk
+				if (!empty($current_chunk)) {
+					$chunks[] = $current_chunk;
+				}
+
+				// If a single SKU is longer than max_length, we need to handle it
+				if (strlen($sku) > $max_length) {
+					// This shouldn't happen with normal SKUs, but handle it gracefully
+					error_log("SKU too long for custom field: " . $sku);
+					$sku = substr($sku, 0, $max_length - 3) . '...';
+				}
+
+				$current_chunk = $sku;
+			}
+		}
+
+		// Add the last chunk if not empty
+		if (!empty($current_chunk)) {
+			$chunks[] = $current_chunk;
+		}
+
+		return $chunks;
+	}
+
+	/**
+	 * Create multiple custom fields for long content
+	 */
+	private function create_chunked_custom_fields($base_name, $content, $is_sku_list = false) {
+		$fields = array();
+
+		if (empty($content)) {
+			return $fields;
+		}
+
+		$content = trim($content);
+
+		if ($is_sku_list) {
+			// Handle SKU lists (comma-separated)
+			$skus = array_map('trim', explode(',', $content));
+			// Remove empty SKUs
+			$skus = array_filter($skus, function($sku) { return !empty($sku); });
+			$chunks = $this->smart_split_skus($skus);
+		} else {
+			// Handle text content
+			$chunks = $this->smart_split_text($content);
+		}
+
+		// Create fields for each chunk
+		foreach ($chunks as $index => $chunk) {
+			$chunk = trim($chunk);
+			if (!empty($chunk) && strlen($chunk) <= 250) {
+				$field_name = $index === 0 ? $base_name : $base_name . '_' . ($index + 1);
+				$fields[] = array(
+					'name' => $field_name,
+					'value' => $chunk
+				);
+			}
+		}
+
+		return $fields;
 	}
 }

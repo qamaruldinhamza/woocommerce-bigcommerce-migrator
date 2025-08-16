@@ -24,7 +24,8 @@ $client_secret = get_option('wc_bc_client_secret', '');
 			<!-- Tabs -->
 			<div class="tabs">
 				<div class="tab active" data-tab="migration"><?php _e('Migration', 'wc-bc-migrator'); ?></div>
-				<div class="tab" data-tab="settings"><?php _e('Settings', 'wc-bc-migrator'); ?></div>
+                <div class="tab" data-tab="verification"><?php _e('Verification', 'wc-bc-migrator'); ?></div>
+                <div class="tab" data-tab="settings"><?php _e('Settings', 'wc-bc-migrator'); ?></div>
 				<div class="tab" data-tab="mapping"><?php _e('Category Mapping', 'wc-bc-migrator'); ?></div>
 				<div class="tab" data-tab="logs"><?php _e('Activity Logs', 'wc-bc-migrator'); ?></div>
 			</div>
@@ -100,6 +101,102 @@ $client_secret = get_option('wc_bc_client_secret', '');
 					<div id="log-entries"></div>
 				</div>
 			</div>
+
+            <!-- Verification Tab -->
+            <div class="tab-content" id="verification-tab">
+                <!-- Verification Statistics -->
+                <div class="wc-bc-stats" id="verification-stats">
+                    <div class="stat-card">
+                        <h3><?php _e('Total to Verify', 'wc-bc-migrator'); ?></h3>
+                        <div class="number" id="verify-stat-total">0</div>
+                    </div>
+                    <div class="stat-card pending">
+                        <h3><?php _e('Pending', 'wc-bc-migrator'); ?></h3>
+                        <div class="number" id="verify-stat-pending">0</div>
+                    </div>
+                    <div class="stat-card success">
+                        <h3><?php _e('Verified', 'wc-bc-migrator'); ?></h3>
+                        <div class="number" id="verify-stat-verified">0</div>
+                    </div>
+                    <div class="stat-card error">
+                        <h3><?php _e('Failed', 'wc-bc-migrator'); ?></h3>
+                        <div class="number" id="verify-stat-failed">0</div>
+                    </div>
+                </div>
+
+                <!-- Verification Actions -->
+                <div class="wc-bc-actions">
+                    <div class="action-group">
+                        <h3><?php _e('Initialize Verification', 'wc-bc-migrator'); ?></h3>
+                        <p><?php _e('Set up the verification system and populate it with migrated products.', 'wc-bc-migrator'); ?></p>
+                        <button class="button" id="init-verification">
+							<?php _e('Initialize Verification System', 'wc-bc-migrator'); ?>
+                        </button>
+                        <button class="button button-secondary" id="populate-verification">
+							<?php _e('Populate Verification Table', 'wc-bc-migrator'); ?>
+                        </button>
+                    </div>
+
+                    <div class="action-group">
+                        <h3><?php _e('Run Verification', 'wc-bc-migrator'); ?></h3>
+                        <p><?php _e('Verify that migrated products still exist in BigCommerce.', 'wc-bc-migrator'); ?></p>
+                        <label><?php _e('Batch Size:', 'wc-bc-migrator'); ?>
+                            <input type="number" class="batch-size-input" id="verify-batch-size" value="50" min="1" max="200">
+                        </label>
+                        <button class="button" id="start-verification">
+							<?php _e('Start Verification', 'wc-bc-migrator'); ?>
+                        </button>
+                        <button class="button button-secondary" id="stop-verification" disabled>
+							<?php _e('Stop Verification', 'wc-bc-migrator'); ?>
+                        </button>
+
+                        <div class="progress-bar" id="verification-progress-bar">
+                            <div class="progress-fill" id="verification-progress-fill">0%</div>
+                        </div>
+                    </div>
+
+                    <div class="action-group">
+                        <h3><?php _e('Verification Management', 'wc-bc-migrator'); ?></h3>
+                        <p><?php _e('Retry failed verifications and download verification reports.', 'wc-bc-migrator'); ?></p>
+                        <button class="button button-secondary" id="retry-verification">
+							<?php _e('Retry Failed Verifications', 'wc-bc-migrator'); ?>
+                        </button>
+                        <button class="button button-secondary" id="download-verification-log">
+							<?php _e('Download Verification Log', 'wc-bc-migrator'); ?>
+                        </button>
+                        <button class="button button-secondary" id="view-failed-verifications">
+							<?php _e('View Failed Verifications', 'wc-bc-migrator'); ?>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Failed Verifications Table -->
+                <div class="failed-verifications-container" id="failed-verifications-container" style="display: none;">
+                    <h3><?php _e('Failed Verifications', 'wc-bc-migrator'); ?></h3>
+                    <div class="table-container">
+                        <table class="wp-list-table widefat fixed striped">
+                            <thead>
+                            <tr>
+                                <th><?php _e('WC Product ID', 'wc-bc-migrator'); ?></th>
+                                <th><?php _e('BC Product ID', 'wc-bc-migrator'); ?></th>
+                                <th><?php _e('Product Name', 'wc-bc-migrator'); ?></th>
+                                <th><?php _e('Error Message', 'wc-bc-migrator'); ?></th>
+                                <th><?php _e('Last Verified', 'wc-bc-migrator'); ?></th>
+                            </tr>
+                            </thead>
+                            <tbody id="failed-verifications-tbody">
+                            <!-- Failed verifications will be populated here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Verification Log -->
+                <div class="log-container" id="verification-live-log" style="display: none;">
+                    <h3><?php _e('Verification Progress', 'wc-bc-migrator'); ?></h3>
+                    <div id="verification-log-entries"></div>
+                </div>
+            </div>
 
 			<!-- Settings Tab -->
 			<div class="tab-content" id="settings-tab">

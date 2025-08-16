@@ -530,4 +530,181 @@
         WCBCMigrator.init();
     });
 
+
+    // Add these variables at the top with your other variables
+    let verificationInterval = null;
+    let isVerificationRunning = false;
+
+// Add these functions to your existing JavaScript
+
+// Initialize verification system
+    function initVerification() {
+        showLoading();
+
+        fetch(wcBcAjax.restUrl + 'wc-bc-migrator/v1/verification/init', {
+            method: 'POST',
+            headers: {
+                'X-WP-Nonce': wcBcAjax.nonce,
+                'Content-Type': 'application/json'
+            }
+        })
+            .then(response => response.json())
+            .then(data => {
+                hideLoading();
+                if (data.success) {
+                    showNotice('Verification system initialized successfully!', 'success');
+                    loadVerificationStats();
+                } else {
+                    showNotice('Error: ' + data.message, 'error');
+                }
+            })
+            .catch(error => {
+                hideLoading();
+                showNotice('Error initializing verification: ' + error.message, 'error');
+            });
+    }
+
+// Populate verification table
+    function populateVerification() {
+        showLoading();
+
+        fetch(wcBcAjax.restUrl + 'wc-bc-migrator/v1/verification/populate', {
+            method: 'POST',
+            headers: {
+                'X-WP-Nonce': wcBcAjax.nonce,
+                'Content-Type': 'application/json'
+            }
+        })
+            .then(response => response.json())
+            .then(data => {
+                hideLoading();
+                if (data.success) {
+                    showNotice(`Verification table populated! Inserted: ${data.inserted}, Skipped: ${data.skipped}`, 'success');
+                    loadVerificationStats();
+                } else {
+                    showNotice('Error: ' + data.message, 'error');
+                }
+            })
+            .catch(error => {
+                hideLoading();
+                showNotice('Error populating verification: ' + error.message, 'error');
+            });
+    }
+
+// Load verification statistics
+    function loadVerificationStats() {
+        fetch(wcBcAjax.restUrl + 'wc-bc-migrator/v1/verification/stats', {
+            method: 'GET',
+            headers: {
+                'X-WP-Nonce': wcBcAjax.nonce
+            }
+        })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.stats) {
+                    updateVerificationStats(data.stats);
+                }
+            });
+    }
+
+// Update verification statistics display
+    function updateVerificationStats(stats) {
+        document.getElementById('verify-stat-total').textContent = stats.total || 0;
+        document.getElementById('verify-stat-pending').textContent = stats.pending || 0;
+        document.getElementById('verify-stat-verified').textContent = stats.verified || 0;
+        document.getElementById('verify-stat-failed').textContent = stats.failed || 0;
+    }
+
+// Start verification process
+    function startVerification() {
+        const batchSize = document.getElementById('verify-batch-size').value;
+        isVerificationRunning = true;
+
+        document.getElementById('start-verification').disabled = true;
+        document.getElementById('stop-verification').disabled = false;
+        document.getElementById('verification-live-log').style.display = 'block';
+
+        // Start the verification process
+        processVerificationBatch(batchSize);
+
+        // Set up interval to continue processing
+        verificationInterval = setInterval(() => {
+            if (isVerificationRunning) {
+                processVerificationBatch(batchSize);
+            }
+        }, 3000); // Process every 3 seconds
+    }
+
+// Process a single verification batch
+    function processVerificationBatch(batchSize) {
+        fetch(wcBcAjax.restUrl + 'wc-bc-migrator/v1/verification/verify', {
+            method: 'POST',
+            headers: {
+                'X-WP-Nonce': wcBcAjax.nonce,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ batch_size: parseInt(batchSize) })
+        })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    addVerificationLogEntry(`Batch processed: ${data.verified} verified, ${data.failed} failed. Remaining: ${data.remaining}`);
+
+                    // Update stats
+                    loadVerificationStats();
+
+                    // Stop if no more pending
+                    if (data.remaining === 0 || data.processed === 0) {
+                        stopVerification();
+                        showNotice('Verification completed!', 'success');
+                    }
+                } else {
+                    addVerificationLogEntry(`Error: ${data.message}`, 'error');
+                    stopVerification();
+                }
+            })
+            .catch(error => {
+                addVerificationLogEntry(`Error: ${error.message}`, 'error');
+                stopVerification();
+            });
+    }
+
+// Stop verification process
+    function stopVerification() {
+        isVerificationRunning = false;
+        if (verificationInterval) {
+            clearInterval(verificationInterval);
+            verificationInterval = null;
+        }
+
+        document.getElementById('start-verification').disabled = false;
+        document.getElementById('stop-verification').disabled = true;
+    }
+
+// Add verification log entry
+    function addVerificationLogEntry(message, type = 'info') {
+        const logContainer = document.getElementById('verification-log-entries');
+        const logEntry = document.createElement('div');
+        logEntry.className = `log-entry ${type}`;
+        logEntry.innerHTML = `<span class="timestamp">${new Date().toLocaleTimeString()}</span> ${message}`;
+        logContainer.appendChild(logEntry);
+        logContainer.scrollTop = logContainer.scrollHeight;
+    }
+
+// Event listeners - add these to your existing DOMContentLoaded function
+    document.getElementById('init-verification').addEventListener('click', initVerification);
+    document.getElementById('populate-verification').addEventListener('click', populateVerification);
+    document.getElementById('start-verification').addEventListener('click', startVerification);
+    document.getElementById('stop-verification').addEventListener('click', stopVerification);
+
+// Load verification stats when verification tab is activated
+    document.addEventListener('DOMContentLoaded', function() {
+        // Add to your existing tab switching logic
+        document.querySelectorAll('.tab[data-tab="verification"]').forEach(tab => {
+            tab.addEventListener('click', function() {
+                loadVerificationStats();
+            });
+        });
+    });
+
 })(jQuery);

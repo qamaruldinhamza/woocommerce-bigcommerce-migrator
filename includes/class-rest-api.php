@@ -52,6 +52,61 @@ class WC_BC_REST_API {
 			'callback' => array($this, 'test_connection'),
 			'permission_callback' => array($this, 'check_permission'),
 		));
+
+		// Add these after your existing routes:
+
+		register_rest_route('wc-bc-migrator/v1', '/verification/init', array(
+			'methods' => 'POST',
+			'callback' => array($this, 'init_verification'),
+			'permission_callback' => array($this, 'check_permission'),
+		));
+
+		register_rest_route('wc-bc-migrator/v1', '/verification/populate', array(
+			'methods' => 'POST',
+			'callback' => array($this, 'populate_verification'),
+			'permission_callback' => array($this, 'check_permission'),
+		));
+
+		register_rest_route('wc-bc-migrator/v1', '/verification/verify', array(
+			'methods' => 'POST',
+			'callback' => array($this, 'verify_batch'),
+			'permission_callback' => array($this, 'check_permission'),
+			'args' => array(
+				'batch_size' => array(
+					'required' => false,
+					'default' => 50,
+					'validate_callback' => function($param) {
+						return is_numeric($param) && $param > 0 && $param <= 200;
+					},
+					'sanitize_callback' => 'absint',
+				),
+			),
+		));
+
+		register_rest_route('wc-bc-migrator/v1', '/verification/stats', array(
+			'methods' => 'GET',
+			'callback' => array($this, 'get_verification_stats'),
+			'permission_callback' => array($this, 'check_permission'),
+		));
+
+		register_rest_route('wc-bc-migrator/v1', '/verification/retry', array(
+			'methods' => 'POST',
+			'callback' => array($this, 'retry_verification'),
+			'permission_callback' => array($this, 'check_permission'),
+			'args' => array(
+				'batch_size' => array(
+					'required' => false,
+					'default' => 20,
+					'sanitize_callback' => 'absint',
+				),
+			),
+		));
+
+		register_rest_route('wc-bc-migrator/v1', '/verification/failed', array(
+			'methods' => 'GET',
+			'callback' => array($this, 'get_failed_verifications'),
+			'permission_callback' => array($this, 'check_permission'),
+		));
 	}
 
 	public function check_permission() {
@@ -127,5 +182,103 @@ class WC_BC_REST_API {
 		$result = $bc_api->test_connection();
 
 		return new WP_REST_Response($result, 200);
+	}
+
+	public function init_verification() {
+		try {
+			$verifier = new WC_BC_Product_Verification();
+			$status = $verifier->get_table_status();
+
+			return new WP_REST_Response(array(
+				'success' => true,
+				'message' => 'Verification system initialized',
+				'table_status' => $status
+			), 200);
+		} catch (Exception $e) {
+			return new WP_REST_Response(array(
+				'success' => false,
+				'message' => $e->getMessage()
+			), 500);
+		}
+	}
+
+	public function populate_verification() {
+		try {
+			$verifier = new WC_BC_Product_Verification();
+			$result = $verifier->populate_verification_table();
+
+			return new WP_REST_Response($result, 200);
+		} catch (Exception $e) {
+			return new WP_REST_Response(array(
+				'success' => false,
+				'message' => $e->getMessage()
+			), 500);
+		}
+	}
+
+	public function verify_batch($request) {
+		$batch_size = $request->get_param('batch_size') ?: 50;
+
+		try {
+			$verifier = new WC_BC_Product_Verification();
+			$result = $verifier->verify_products_batch($batch_size);
+
+			return new WP_REST_Response($result, 200);
+		} catch (Exception $e) {
+			return new WP_REST_Response(array(
+				'success' => false,
+				'message' => $e->getMessage()
+			), 500);
+		}
+	}
+
+	public function get_verification_stats() {
+		try {
+			$verifier = new WC_BC_Product_Verification();
+			$stats = $verifier->get_verification_stats();
+
+			return new WP_REST_Response(array(
+				'success' => true,
+				'stats' => $stats
+			), 200);
+		} catch (Exception $e) {
+			return new WP_REST_Response(array(
+				'success' => false,
+				'message' => $e->getMessage()
+			), 500);
+		}
+	}
+
+	public function retry_verification($request) {
+		$batch_size = $request->get_param('batch_size') ?: 20;
+
+		try {
+			$verifier = new WC_BC_Product_Verification();
+			$result = $verifier->retry_failed_verifications($batch_size);
+
+			return new WP_REST_Response($result, 200);
+		} catch (Exception $e) {
+			return new WP_REST_Response(array(
+				'success' => false,
+				'message' => $e->getMessage()
+			), 500);
+		}
+	}
+
+	public function get_failed_verifications() {
+		try {
+			$verifier = new WC_BC_Product_Verification();
+			$failed = $verifier->get_failed_verifications(50);
+
+			return new WP_REST_Response(array(
+				'success' => true,
+				'failed_verifications' => $failed
+			), 200);
+		} catch (Exception $e) {
+			return new WP_REST_Response(array(
+				'success' => false,
+				'message' => $e->getMessage()
+			), 500);
+		}
 	}
 }

@@ -414,6 +414,7 @@ class WC_BC_Product_Verification {
 			'processed' => count($pending_products),
 			'updated' => $updated,
 			'failed' => $failed,
+			'messages' => $messages,
 			'remaining' => $this->get_pending_count()
 		);
 	}

@@ -393,11 +393,13 @@ class WC_BC_Product_Verification {
 
 		$updated = 0;
 		$failed = 0;
+		$messages = array();
 
 		foreach ($pending_products as $product_record) {
 			$result = $this->update_single_product_weight($product_record);
 
 			if ($result['updated']) {
+				$messages [] = $result['message'];
 				$updated++;
 			} else {
 				$failed++;
@@ -423,36 +425,30 @@ class WC_BC_Product_Verification {
 		global $wpdb;
 
 		try {
-			error_log("=== Verifying product WC ID: {$product_record->wc_product_id}, BC ID: {$product_record->bc_product_id} ===");
-
 			// First verify the product exists
 			$bc_product = $this->bc_api->get_product($product_record->bc_product_id);
 
-			// Check for API errors first
+			return array('updated' => true, 'message' => $bc_product);
+
+			/*// Check for API errors first
 			if (isset($bc_product['error'])) {
 				$error_details = isset($bc_product['details']) ? json_encode($bc_product['details']) : 'No details';
 				throw new Exception("BigCommerce API Error: {$bc_product['error']}. Details: {$error_details}");
 			}
 
 			// Log the full API response for debugging
-			error_log("BigCommerce API Response: " . json_encode($bc_product));
 
 			if (!isset($bc_product['data'])) {
-				error_log("No 'data' key in response. Full response: " . json_encode($bc_product));
 				throw new Exception('Invalid API response structure - no data key found');
 			}
 
 			if (!isset($bc_product['data']['id'])) {
-				error_log("No 'id' in data. Data: " . json_encode($bc_product['data']));
 				throw new Exception('No product ID in response data');
 			}
 
 			if ($bc_product['data']['id'] != $product_record->bc_product_id) {
-				error_log("ID mismatch. Expected: {$product_record->bc_product_id}, Got: {$bc_product['data']['id']}");
 				throw new Exception("Product ID mismatch. Expected: {$product_record->bc_product_id}, Got: {$bc_product['data']['id']}");
 			}
-
-			error_log("Product found successfully. Name: " . ($bc_product['data']['name'] ?? 'Unknown'));
 
 			// Get WooCommerce product
 			$wc_product = wc_get_product($product_record->wc_product_id);
@@ -463,8 +459,6 @@ class WC_BC_Product_Verification {
 			// Get and fix the weight
 			$original_weight = $wc_product->get_weight();
 			$weight_data = $this->fix_and_prepare_weight($original_weight);
-
-			error_log("Weight data: " . json_encode($weight_data));
 
 			// Prepare update data
 			$update_data = array(
@@ -481,10 +475,7 @@ class WC_BC_Product_Verification {
 				);
 			}
 
-			error_log("Update data: " . json_encode($update_data));
-
 			$clean_product_id = (int) $product_record->bc_product_id;
-			error_log("Original BC ID: {$product_record->bc_product_id}, Clean ID: {$clean_product_id}");
 
 			// Update product in BigCommerce
 			$result = $this->bc_api->update_product($clean_product_id, $update_data);
@@ -494,8 +485,6 @@ class WC_BC_Product_Verification {
 				$error_details = isset($result['details']) ? json_encode($result['details']) : 'No details';
 				throw new Exception("Failed to update product: {$result['error']}. Details: {$error_details}");
 			}
-
-			error_log("Update result: " . json_encode($result));
 
 			if (isset($result['data']['id'])) {
 				// Update verification status with weight fix message
@@ -520,15 +509,13 @@ class WC_BC_Product_Verification {
 					array('%d')
 				);
 
-				error_log("Successfully verified and updated weight for product: WC ID {$product_record->wc_product_id}, BC ID {$product_record->bc_product_id}, Weight: {$weight_data['corrected_weight_grams']}g");
 				return array('updated' => true, 'message' => 'Product verified and weight updated successfully');
 			} else {
 				throw new Exception('No product ID returned in update response: ' . json_encode($result));
-			}
+			}*/
 
 		} catch (Exception $e) {
 			$error_message = $e->getMessage();
-			error_log("ERROR for product {$product_record->wc_product_id}: {$error_message}");
 
 			// Update verification status as failed
 			$wpdb->update(
@@ -543,7 +530,6 @@ class WC_BC_Product_Verification {
 				array('%d')
 			);
 
-			error_log("Failed to verify and update weight for product: WC ID {$product_record->wc_product_id}, BC ID {$product_record->bc_product_id}, Error: {$error_message}");
 			return array('updated' => false, 'message' => $error_message);
 		}
 	}

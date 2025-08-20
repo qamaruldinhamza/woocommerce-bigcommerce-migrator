@@ -16,10 +16,6 @@ class WC_BC_BigCommerce_API {
 
 	private function make_request($endpoint, $method = 'GET', $data = null) {
 		$full_url = $this->api_url . $endpoint;
-		error_log("=== BigCommerce API Request ===");
-		error_log("Method: $method");
-		error_log("URL: $full_url");
-		error_log("Data: " . ($data ? json_encode($data) : 'null'));
 
 		$args = array(
 			'method' => $method,
@@ -28,7 +24,6 @@ class WC_BC_BigCommerce_API {
 				'Content-Type' => 'application/json',
 				'Accept' => 'application/json',
 			),
-			'timeout' => 30,
 		);
 
 		if ($data && in_array($method, array('POST', 'PUT'))) {
@@ -45,14 +40,9 @@ class WC_BC_BigCommerce_API {
 		$body = wp_remote_retrieve_body($response);
 		$status_code = wp_remote_retrieve_response_code($response);
 
-		error_log("Response Code: $status_code");
-		error_log("Response Body: " . $body);
-
 		$data = json_decode($body, true);
 
 		if ($status_code >= 400) {
-			error_log("API Error - Status: $status_code, Body: $body");
-
 			// More detailed error information
 			$error_message = 'API Error';
 			if (is_array($data)) {
@@ -75,7 +65,6 @@ class WC_BC_BigCommerce_API {
 			);
 		}
 
-		error_log("Success Response: " . json_encode($data));
 		return $data;
 	}
 
@@ -243,11 +232,6 @@ class WC_BC_BigCommerce_API {
 
 	public function update_product($product_id, $product_data) {
 		$endpoint = "catalog/products/{$product_id}";
-
-		// Debug the full URL that will be called
-		$full_url = $this->api_url . $endpoint;
-		error_log("Full update URL: " . $full_url);
-		error_log("Expected format: https://api.bigcommerce.com/stores/{$this->store_hash}/v3/catalog/products/{$product_id}");
 
 		return $this->make_request($endpoint, 'PUT', $product_data);
 	}

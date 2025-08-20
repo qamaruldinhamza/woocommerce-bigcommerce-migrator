@@ -429,9 +429,7 @@ class WC_BC_Product_Verification {
 			// First verify the product exists
 			$bc_product = $this->bc_api->get_product($product_record->bc_product_id);
 
-			return array('updated' => true, 'message' => $bc_product);
-
-			/*// Check for API errors first
+			// Check for API errors first
 			if (isset($bc_product['error'])) {
 				$error_details = isset($bc_product['details']) ? json_encode($bc_product['details']) : 'No details';
 				throw new Exception("BigCommerce API Error: {$bc_product['error']}. Details: {$error_details}");
@@ -513,7 +511,7 @@ class WC_BC_Product_Verification {
 				return array('updated' => true, 'message' => 'Product verified and weight updated successfully');
 			} else {
 				throw new Exception('No product ID returned in update response: ' . json_encode($result));
-			}*/
+			}
 
 		} catch (Exception $e) {
 			$error_message = $e->getMessage();

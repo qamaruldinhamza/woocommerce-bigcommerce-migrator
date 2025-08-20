@@ -15,6 +15,12 @@ class WC_BC_BigCommerce_API {
 	}
 
 	private function make_request($endpoint, $method = 'GET', $data = null) {
+		$full_url = $this->api_url . $endpoint;
+		error_log("=== BigCommerce API Request ===");
+		error_log("Method: $method");
+		error_log("URL: $full_url");
+		error_log("Data: " . ($data ? json_encode($data) : 'null'));
+
 		$args = array(
 			'method' => $method,
 			'headers' => array(
@@ -29,20 +35,47 @@ class WC_BC_BigCommerce_API {
 			$args['body'] = json_encode($data);
 		}
 
-		$response = wp_remote_request($this->api_url . $endpoint, $args);
+		$response = wp_remote_request($full_url, $args);
 
 		if (is_wp_error($response)) {
+			error_log("WP Error: " . $response->get_error_message());
 			return array('error' => $response->get_error_message());
 		}
 
 		$body = wp_remote_retrieve_body($response);
+		$status_code = wp_remote_retrieve_response_code($response);
+
+		error_log("Response Code: $status_code");
+		error_log("Response Body: " . $body);
+
 		$data = json_decode($body, true);
 
-		$status_code = wp_remote_retrieve_response_code($response);
 		if ($status_code >= 400) {
-			return array('error' => $data['title'] ?? 'API Error', 'details' => $data);
+			error_log("API Error - Status: $status_code, Body: $body");
+
+			// More detailed error information
+			$error_message = 'API Error';
+			if (is_array($data)) {
+				if (isset($data['title'])) {
+					$error_message = $data['title'];
+				} elseif (isset($data['message'])) {
+					$error_message = $data['message'];
+				} elseif (isset($data['error'])) {
+					$error_message = $data['error'];
+				}
+			}
+
+			return array(
+				'error' => $error_message,
+				'details' => array(
+					'status_code' => $status_code,
+					'response_body' => $body,
+					'parsed_data' => $data
+				)
+			);
 		}
 
+		error_log("Success Response: " . json_encode($data));
 		return $data;
 	}
 

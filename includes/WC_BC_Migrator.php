@@ -42,6 +42,7 @@ class WC_BC_Migrator {
 		require_once WC_BC_MIGRATOR_PATH . 'includes/class-category-migrator.php';
 		require_once WC_BC_MIGRATOR_PATH . 'includes/class-attribute-migrator.php';
 		require_once WC_BC_MIGRATOR_PATH . 'includes/class-b2b-handler.php';
+		require_once WC_BC_MIGRATOR_PATH . 'includes/class-product-verification.php';
 	}
 
 	public function activate() {

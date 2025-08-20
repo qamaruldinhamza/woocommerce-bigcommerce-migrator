@@ -249,11 +249,11 @@ class WC_BC_REST_API {
 	public function get_verification_stats() {
 		try {
 			$verifier = new WC_BC_Product_Verification();
-			//$stats = $verifier->get_verification_stats();
+			$stats = $verifier->get_verification_stats();
 
 			return new WP_REST_Response(array(
 				'success' => true,
-				'stats' => ''//$stats
+				'stats' => $stats
 			), 200);
 		} catch (Exception $e) {
 			return new WP_REST_Response(array(

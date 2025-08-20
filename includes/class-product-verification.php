@@ -24,7 +24,7 @@ class WC_BC_Product_Verification {
 	public function __construct() {
 		$this->bc_api = new WC_BC_BigCommerce_API();
 		$this->verification_table = $this->get_verification_table_name();
-		//$this->ensure_verification_table_exists();
+		$this->ensure_verification_table_exists();
 	}
 
 	/**

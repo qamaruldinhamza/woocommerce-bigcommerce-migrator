@@ -44,6 +44,14 @@
             // Export functions
             $('#export-errors').on('click', this.exportErrors.bind(this));
             $('#export-logs').on('click', this.exportLogs.bind(this));
+
+            // Verification actions
+            $('#init-verification').on('click', this.initVerification.bind(this));
+            $('#populate-verification').on('click', this.populateVerification.bind(this));
+            $('#start-verification').on('click', this.startVerification.bind(this));
+            $('#stop-verification').on('click', this.stopVerification.bind(this));
+            $('#retry-verification').on('click', this.retryVerification.bind(this));
+            $('#verify-and-fix-weights').on('click', this.verifyAndFixWeights.bind(this));
         },
 
         checkMigrationStatus: function() {
@@ -763,14 +771,6 @@
             }
         });
     };
-
-    // Verification actions
-    $('#init-verification').on('click', this.initVerification.bind(this));
-    $('#populate-verification').on('click', this.populateVerification.bind(this));
-    $('#start-verification').on('click', this.startVerification.bind(this));
-    $('#stop-verification').on('click', this.stopVerification.bind(this));
-    $('#retry-verification').on('click', this.retryVerification.bind(this));
-    $('#verify-and-fix-weights').on('click', this.verifyAndFixWeights.bind(this));
 
     $('.tab').on('click', function() {
         var tabId = $(this).data('tab');

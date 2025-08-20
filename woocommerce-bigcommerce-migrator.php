@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('WC_BC_MIGRATOR_VERSION', '1.1.3');
+define('WC_BC_MIGRATOR_VERSION', '1.1.4');
 define('WC_BC_MIGRATOR_PATH', plugin_dir_path(__FILE__));
 define('WC_BC_MIGRATOR_URL', plugin_dir_url(__FILE__));
 define('WC_BC_MIGRATOR_TABLE', 'wc_bc_product_mapping');

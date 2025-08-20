@@ -644,22 +644,20 @@
         $('#verification-live-log').show();
 
         this.addVerificationLogEntry('Starting verification and weight fixing process...');
-        this.processVerificationBatch(batchSize);
 
-        // Set up interval to continue processing
-        this.verificationInterval = setInterval(function() {
-            if (WCBCMigrator.isVerificationRunning) {
-                WCBCMigrator.processVerificationBatch(batchSize);
-            }
-        }, 3000); // Process every 3 seconds
+        // Start the first batch - no interval needed
+        this.processVerificationBatch(batchSize);
     };
 
-    // Process a single verification batch
+// Process a single verification batch
     WCBCMigrator.processVerificationBatch = function(batchSize) {
+        // Process one at a time to avoid rate limiting
+        var actualBatchSize = 1;
+
         $.ajax({
-            url: wcBcMigrator.apiUrl + 'verification/update-weights', // Changed to weight endpoint
+            url: wcBcMigrator.apiUrl + 'verification/update-weights',
             method: 'POST',
-            data: { batch_size: parseInt(batchSize) },
+            data: { batch_size: actualBatchSize },
             beforeSend: function(xhr) {
                 xhr.setRequestHeader('X-WP-Nonce', wcBcMigrator.nonce);
             },
@@ -671,8 +669,20 @@
                     WCBCMigrator.loadVerificationStats();
                     WCBCMigrator.updateVerificationProgress();
 
-                    // Stop if no more pending
-                    if (data.remaining === 0 || data.processed === 0) {
+                    // Check if we should continue processing
+                    if (data.remaining > 0 && data.processed > 0) {
+                        // Check if verification is still running before scheduling next batch
+                        if (WCBCMigrator.isVerificationRunning) {
+                            // Schedule next batch after 1 second delay
+                            setTimeout(function() {
+                                // Double-check verification is still running
+                                if (WCBCMigrator.isVerificationRunning) {
+                                    WCBCMigrator.processVerificationBatch(batchSize);
+                                }
+                            }, 1000);
+                        }
+                    } else {
+                        // No more products to process or no products were processed
                         WCBCMigrator.stopVerification();
                         WCBCMigrator.addLog('success', 'Verification and weight fixing completed!');
                     }
@@ -686,6 +696,22 @@
                 WCBCMigrator.stopVerification();
             }
         });
+    };
+
+// Update stopVerification to not need interval clearing
+    WCBCMigrator.stopVerification = function() {
+        this.isVerificationRunning = false;
+
+        // Remove interval clearing since we're not using intervals anymore
+        // if (this.verificationInterval) {
+        //     clearInterval(this.verificationInterval);
+        //     this.verificationInterval = null;
+        // }
+
+        $('#start-verification').prop('disabled', false);
+        $('#stop-verification').prop('disabled', true);
+
+        WCBCMigrator.addVerificationLogEntry('Verification process stopped');
     };
 
     // Add verification log entry
@@ -801,18 +827,6 @@
         }
 
         $('#verify-and-fix-weights').prop('disabled', false).text('Verify & Fix Weights');
-        $('#stop-verification').prop('disabled', true);
-    };
-
-    // Update the existing stopVerification method to handle both types
-    WCBCMigrator.stopVerification = function() {
-        this.isVerificationRunning = false;
-        if (this.verificationInterval) {
-            clearInterval(this.verificationInterval);
-            this.verificationInterval = null;
-        }
-
-        $('#start-verification').prop('disabled', false);
         $('#stop-verification').prop('disabled', true);
     };
 

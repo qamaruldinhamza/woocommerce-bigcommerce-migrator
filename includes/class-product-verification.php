@@ -435,8 +435,6 @@ class WC_BC_Product_Verification {
 				throw new Exception("BigCommerce API Error: {$bc_product['error']}. Details: {$error_details}");
 			}
 
-			// Log the full API response for debugging
-
 			if (!isset($bc_product['data'])) {
 				throw new Exception('Invalid API response structure - no data key found');
 			}
@@ -464,20 +462,41 @@ class WC_BC_Product_Verification {
 				'weight' => (float) $weight_data['corrected_weight_grams']
 			);
 
-			// Prepare custom fields for weight range
+			// Handle custom fields - check if weight_range_grams already exists
 			if (!empty($weight_data['weight_range'])) {
-				$update_data['custom_fields'] = array(
-					array(
+				$existing_custom_fields = isset($bc_product['data']['custom_fields']) ? $bc_product['data']['custom_fields'] : array();
+				$weight_range_exists = false;
+				$updated_custom_fields = array();
+
+				// Check existing custom fields
+				foreach ($existing_custom_fields as $field) {
+					if ($field['name'] === 'weight_range_grams') {
+						$weight_range_exists = true;
+						// Update the existing field
+						$updated_custom_fields[] = array(
+							'id' => $field['id'],
+							'name' => 'weight_range_grams',
+							'value' => $weight_data['weight_range']
+						);
+					} else {
+						// Keep other existing fields
+						$updated_custom_fields[] = $field;
+					}
+				}
+
+				// If weight_range_grams doesn't exist, add it
+				if (!$weight_range_exists) {
+					$updated_custom_fields[] = array(
 						'name' => 'weight_range_grams',
 						'value' => $weight_data['weight_range']
-					)
-				);
+					);
+				}
+
+				$update_data['custom_fields'] = $updated_custom_fields;
 			}
 
-			$clean_product_id = (int) $product_record->bc_product_id;
-
 			// Update product in BigCommerce
-			$result = $this->bc_api->update_product($clean_product_id, $update_data);
+			$result = $this->bc_api->update_product($product_record->bc_product_id, $update_data);
 
 			// Check for update errors
 			if (isset($result['error'])) {

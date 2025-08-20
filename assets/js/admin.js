@@ -741,13 +741,36 @@
     };
 
     // Verify and fix weights
+    // Add these properties to track weight verification
+    WCBCMigrator.weightVerificationInterval = null;
+    WCBCMigrator.isWeightVerificationRunning = false;
+
+    // Update the verifyAndFixWeights function to work like recurring batches
     WCBCMigrator.verifyAndFixWeights = function(e) {
         e.preventDefault();
-        var button = $(e.target);
+
+        if (this.isWeightVerificationRunning) return;
+
         var batchSize = $('#verify-batch-size').val();
+        this.isWeightVerificationRunning = true;
 
-        button.prop('disabled', true).text('Verifying & Fixing Weights...');
+        $('#verify-and-fix-weights').prop('disabled', true).text('Verifying & Fixing Weights...');
+        $('#stop-verification').prop('disabled', false);
+        $('#verification-live-log').show();
 
+        this.addVerificationLogEntry('Starting weight verification and fixing process...');
+        this.processWeightVerificationBatch(batchSize);
+
+        // Set up interval to continue processing
+        this.weightVerificationInterval = setInterval(function() {
+            if (WCBCMigrator.isWeightVerificationRunning) {
+                WCBCMigrator.processWeightVerificationBatch(batchSize);
+            }
+        }, 3000); // Process every 3 seconds
+    };
+
+    // Add new method for processing weight verification batches
+    WCBCMigrator.processWeightVerificationBatch = function(batchSize) {
         $.ajax({
             url: wcBcMigrator.apiUrl + 'verification/update-weights',
             method: 'POST',
@@ -757,20 +780,76 @@
             },
             success: function(data) {
                 if (data.success) {
-                    WCBCMigrator.addLog('success', 'Weight verification completed: ' + data.updated + ' products updated, ' + data.failed + ' failed');
+                    WCBCMigrator.addVerificationLogEntry('Weight verification batch completed: ' + data.updated + ' products updated, ' + data.failed + ' failed. Remaining: ' + (data.remaining || 0));
                     WCBCMigrator.loadVerificationStats();
+                    WCBCMigrator.updateVerificationProgress();
+
+                    // Stop if no more pending or no products processed
+                    if ((data.remaining === 0) || (data.processed === 0)) {
+                        WCBCMigrator.stopWeightVerification();
+                        WCBCMigrator.addLog('success', 'Weight verification and fixing completed!');
+                    }
                 } else {
-                    WCBCMigrator.addLog('error', 'Error verifying weights: ' + data.message);
+                    WCBCMigrator.addVerificationLogEntry('Error: ' + data.message, 'error');
+                    WCBCMigrator.stopWeightVerification();
                 }
             },
             error: function() {
-                WCBCMigrator.addLog('error', 'Failed to verify and fix weights');
-            },
-            complete: function() {
-                button.prop('disabled', false).text('Verify & Fix Weights');
+                WCBCMigrator.addVerificationLogEntry('Error processing weight verification batch', 'error');
+                WCBCMigrator.stopWeightVerification();
             }
         });
     };
+
+    // Add method to stop weight verification
+    WCBCMigrator.stopWeightVerification = function() {
+        this.isWeightVerificationRunning = false;
+        if (this.weightVerificationInterval) {
+            clearInterval(this.weightVerificationInterval);
+            this.weightVerificationInterval = null;
+        }
+
+        $('#verify-and-fix-weights').prop('disabled', false).text('Verify & Fix Weights');
+        $('#stop-verification').prop('disabled', true);
+    };
+
+    // Update the existing stopVerification method to handle both types
+    WCBCMigrator.stopVerification = function() {
+        // Stop regular verification
+        this.isVerificationRunning = false;
+        if (this.verificationInterval) {
+            clearInterval(this.verificationInterval);
+            this.verificationInterval = null;
+        }
+
+        // Stop weight verification
+        this.stopWeightVerification();
+
+        $('#start-verification').prop('disabled', false);
+        $('#stop-verification').prop('disabled', true);
+    };
+
+    // Add progress tracking for verification
+    WCBCMigrator.updateVerificationProgress = function() {
+        // Get current stats to calculate progress
+        $.ajax({
+            url: wcBcMigrator.apiUrl + 'verification/stats',
+            method: 'GET',
+            beforeSend: function(xhr) {
+                xhr.setRequestHeader('X-WP-Nonce', wcBcMigrator.nonce);
+            },
+            success: function(data) {
+                if (data.success && data.stats) {
+                    var total = parseInt(data.stats.total) || 0;
+                    var completed = parseInt(data.stats.verified) + parseInt(data.stats.failed);
+                    var percentage = total > 0 ? Math.round((completed / total) * 100) : 0;
+
+                    $('#verification-progress-fill').css('width', percentage + '%').text(percentage + '%');
+                }
+            }
+        });
+    };
+
 
     $('.tab').on('click', function() {
         var tabId = $(this).data('tab');

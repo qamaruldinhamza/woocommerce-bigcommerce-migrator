@@ -384,8 +384,10 @@ class WC_BC_Product_Verification {
 			return array(
 				'success' => true,
 				'message' => 'No pending products to verify and update',
+				'processed' => 0,
 				'updated' => 0,
-				'failed' => 0
+				'failed' => 0,
+				'remaining' => 0
 			);
 		}
 
@@ -446,20 +448,91 @@ class WC_BC_Product_Verification {
 
 			error_log("Product found successfully. Name: " . $bc_product['data']['name']);
 
-			// Rest of your existing code...
 			// Get WooCommerce product
 			$wc_product = wc_get_product($product_record->wc_product_id);
 			if (!$wc_product) {
 				throw new Exception('WooCommerce product not found');
 			}
 
-			// ... continue with weight update logic
+			// Get and fix the weight
+			$original_weight = $wc_product->get_weight();
+			$weight_data = $this->fix_and_prepare_weight($original_weight);
+
+			error_log("Weight data: " . json_encode($weight_data));
+
+			// Prepare update data
+			$update_data = array(
+				'weight' => (float) $weight_data['corrected_weight_grams']
+			);
+
+			// Prepare custom fields for weight range
+			$custom_fields = array();
+			if (!empty($weight_data['weight_range'])) {
+				$custom_fields[] = array(
+					'name' => 'weight_range_grams',
+					'value' => $weight_data['weight_range']
+				);
+			}
+
+			if (!empty($custom_fields)) {
+				$update_data['custom_fields'] = $custom_fields;
+			}
+
+			error_log("Update data: " . json_encode($update_data));
+
+			// Update product in BigCommerce
+			$result = $this->bc_api->update_product($product_record->bc_product_id, $update_data);
+
+			error_log("Update result: " . json_encode($result));
+
+			if (isset($result['data']['id'])) {
+				// Update verification status with weight fix message
+				$verification_message = 'Product verified and weight fixed';
+				if (!empty($weight_data['original_weight']) && $weight_data['original_weight'] !== (string)$weight_data['corrected_weight_grams']) {
+					$verification_message .= ' (Weight: ' . $weight_data['original_weight'] . ' → ' . $weight_data['corrected_weight_grams'] . 'g';
+					if (!empty($weight_data['weight_range'])) {
+						$verification_message .= ', Range: ' . $weight_data['weight_range'];
+					}
+					$verification_message .= ')';
+				}
+
+				$wpdb->update(
+					$this->verification_table,
+					array(
+						'verification_status' => 'verified',
+						'verification_message' => $verification_message,
+						'last_verified' => current_time('mysql')
+					),
+					array('id' => $product_record->id),
+					array('%s', '%s', '%s'),
+					array('%d')
+				);
+
+				error_log("Successfully verified and updated weight for product: WC ID {$product_record->wc_product_id}, BC ID {$product_record->bc_product_id}, Weight: {$weight_data['corrected_weight_grams']}g");
+				return array('updated' => true, 'message' => 'Product verified and weight updated successfully');
+			} else {
+				throw new Exception('Failed to update product in BigCommerce: ' . json_encode($result));
+			}
 
 		} catch (Exception $e) {
 			$error_message = $e->getMessage();
 			error_log("ERROR for product {$product_record->wc_product_id}: {$error_message}");
 
-			// ... rest of error handling
+			// Update verification status as failed
+			$wpdb->update(
+				$this->verification_table,
+				array(
+					'verification_status' => 'failed',
+					'verification_message' => 'Verification and weight update failed: ' . $error_message,
+					'last_verified' => current_time('mysql')
+				),
+				array('id' => $product_record->id),
+				array('%s', '%s', '%s'),
+				array('%d')
+			);
+
+			error_log("Failed to verify and update weight for product: WC ID {$product_record->wc_product_id}, BC ID {$product_record->bc_product_id}, Error: {$error_message}");
+			return array('updated' => false, 'message' => $error_message);
 		}
 	}
 

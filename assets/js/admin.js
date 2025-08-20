@@ -652,12 +652,10 @@
 // Process a single verification batch
     WCBCMigrator.processVerificationBatch = function(batchSize) {
         // Process one at a time to avoid rate limiting
-        var actualBatchSize = 1;
-
         $.ajax({
             url: wcBcMigrator.apiUrl + 'verification/update-weights',
             method: 'POST',
-            data: { batch_size: actualBatchSize },
+            data: { batch_size: batchSize },
             beforeSend: function(xhr) {
                 xhr.setRequestHeader('X-WP-Nonce', wcBcMigrator.nonce);
             },

@@ -107,6 +107,20 @@ class WC_BC_REST_API {
 			'callback' => array($this, 'get_failed_verifications'),
 			'permission_callback' => array($this, 'check_permission'),
 		));
+
+		register_rest_route('wc-bc-migrator/v1', '/verification/update-weights', array(
+			'methods' => 'POST',
+			'callback' => array($this, 'update_weights'),
+			'permission_callback' => array($this, 'check_permission'),
+			'args' => array(
+				'batch_size' => array(
+					'required' => false,
+					'default' => 20,
+					'sanitize_callback' => 'absint',
+				),
+			),
+		));
+
 	}
 
 	public function check_permission() {
@@ -281,4 +295,21 @@ class WC_BC_REST_API {
 			), 500);
 		}
 	}
+
+	public function update_weights($request) {
+		$batch_size = $request->get_param('batch_size') ?: 20;
+
+		try {
+			$verifier = new WC_BC_Product_Verification();
+			$result = $verifier->verify_and_update_weights($batch_size);
+
+			return new WP_REST_Response($result, 200);
+		} catch (Exception $e) {
+			return new WP_REST_Response(array(
+				'success' => false,
+				'message' => $e->getMessage()
+			), 500);
+		}
+	}
+
 }

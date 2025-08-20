@@ -215,4 +215,12 @@ class WC_BC_BigCommerce_API {
 		$endpoint = "/catalog/products/{$product_id}/variants/{$variant_id}";
 		return $this->make_request('GET', $this->api_url . $endpoint);
 	}
+
+	/**
+	 * Update a product in BigCommerce
+	 */
+	public function update_product($product_id, $product_data) {
+		$endpoint = "/catalog/products/{$product_id}";
+		return $this->make_request('PUT', $this->api_url . $endpoint, $product_data);
+	}
 }

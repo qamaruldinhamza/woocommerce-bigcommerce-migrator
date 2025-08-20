@@ -195,7 +195,7 @@ class WC_BC_Product_Verification {
 	}
 
 	/**
-	 * Verify a single product
+	 * Verify a single product (verification only)
 	 */
 	private function verify_single_product($product_record) {
 		global $wpdb;
@@ -363,5 +363,230 @@ class WC_BC_Product_Verification {
 			'stats' => $stats,
 			'message' => "Verification table exists with {$stats['total']} records"
 		);
+	}
+
+	/**
+	 * Verify and update product weights
+	 */
+	public function verify_and_update_weights($batch_size = 20) {
+		global $wpdb;
+
+		// Get verified products to update weights
+		$verified_products = $wpdb->get_results($wpdb->prepare(
+			"SELECT v.*, m.wc_product_id 
+         FROM {$this->verification_table} v
+         JOIN {$wpdb->prefix}" . WC_BC_MIGRATOR_TABLE . " m ON v.wc_product_id = m.wc_product_id
+         WHERE v.verification_status = 'verified' 
+         AND m.wc_variation_id IS NULL
+         ORDER BY v.id ASC 
+         LIMIT %d",
+			$batch_size
+		));
+
+		if (empty($verified_products)) {
+			return array(
+				'success' => true,
+				'message' => 'No verified products to update',
+				'updated' => 0,
+				'failed' => 0
+			);
+		}
+
+		$updated = 0;
+		$failed = 0;
+
+		foreach ($verified_products as $product_record) {
+			$result = $this->update_single_product_weight($product_record);
+
+			if ($result['updated']) {
+				$updated++;
+			} else {
+				$failed++;
+			}
+
+			// Add delay to avoid API rate limits
+			usleep(300000); // 0.3 seconds
+		}
+
+		return array(
+			'success' => true,
+			'processed' => count($verified_products),
+			'updated' => $updated,
+			'failed' => $failed
+		);
+	}
+
+	/**
+	 * Update weight for a single product (verify + fix weight)
+	 */
+	private function update_single_product_weight($product_record) {
+		global $wpdb;
+
+		try {
+			// First verify the product exists
+			$bc_product = $this->bc_api->get_product($product_record->bc_product_id);
+
+			if (!isset($bc_product['data']['id']) || $bc_product['data']['id'] != $product_record->bc_product_id) {
+				throw new Exception('Product not found in BigCommerce or ID mismatch');
+			}
+
+			// Get WooCommerce product
+			$wc_product = wc_get_product($product_record->wc_product_id);
+			if (!$wc_product) {
+				throw new Exception('WooCommerce product not found');
+			}
+
+			// Get and fix the weight
+			$original_weight = $wc_product->get_weight();
+			$weight_data = $this->fix_and_prepare_weight($original_weight);
+
+			// Prepare update data
+			$update_data = array(
+				'weight' => (float) $weight_data['corrected_weight_grams']
+			);
+
+			// Prepare custom fields for weight range
+			$custom_fields = array();
+			if (!empty($weight_data['weight_range'])) {
+				$custom_fields[] = array(
+					'name' => 'weight_range_grams',
+					'value' => $weight_data['weight_range']
+				);
+			}
+
+			if (!empty($custom_fields)) {
+				$update_data['custom_fields'] = $custom_fields;
+			}
+
+			// Update product in BigCommerce
+			$result = $this->bc_api->update_product($product_record->bc_product_id, $update_data);
+
+			if (isset($result['data']['id'])) {
+				// Update verification status with weight fix message
+				$verification_message = 'Product verified and weight fixed';
+				if (!empty($weight_data['original_weight']) && $weight_data['original_weight'] !== $weight_data['corrected_weight_grams']) {
+					$verification_message .= ' (Weight: ' . $weight_data['original_weight'] . ' → ' . $weight_data['corrected_weight_grams'] . 'g';
+					if (!empty($weight_data['weight_range'])) {
+						$verification_message .= ', Range: ' . $weight_data['weight_range'];
+					}
+					$verification_message .= ')';
+				}
+
+				$wpdb->update(
+					$this->verification_table,
+					array(
+						'verification_status' => 'verified',
+						'verification_message' => $verification_message,
+						'last_verified' => current_time('mysql')
+					),
+					array('id' => $product_record->id),
+					array('%s', '%s', '%s'),
+					array('%d')
+				);
+
+				error_log("Verified and updated weight for product: WC ID {$product_record->wc_product_id}, BC ID {$product_record->bc_product_id}, Weight: {$weight_data['corrected_weight_grams']}g");
+				return array('updated' => true, 'message' => 'Product verified and weight updated successfully');
+			} else {
+				throw new Exception('Failed to update product in BigCommerce: ' . json_encode($result));
+			}
+
+		} catch (Exception $e) {
+			$error_message = $e->getMessage();
+
+			// Update verification status as failed
+			$wpdb->update(
+				$this->verification_table,
+				array(
+					'verification_status' => 'failed',
+					'verification_message' => 'Verification and weight update failed: ' . $error_message,
+					'last_verified' => current_time('mysql')
+				),
+				array('id' => $product_record->id),
+				array('%s', '%s', '%s'),
+				array('%d')
+			);
+
+			error_log("Failed to verify and update weight for product: WC ID {$product_record->wc_product_id}, BC ID {$product_record->bc_product_id}, Error: {$error_message}");
+			return array('updated' => false, 'message' => $error_message);
+		}
+	}
+
+	/**
+	 * Fix weight and prepare weight data with intelligent range correction
+	 */
+	private function fix_and_prepare_weight($weight_string) {
+		if (empty($weight_string)) {
+			return array(
+				'corrected_weight_grams' => 0,
+				'weight_range' => '',
+				'original_weight' => ''
+			);
+		}
+
+		// Convert to string if it's not
+		$weight_string = (string) $weight_string;
+		$original_weight = $weight_string;
+		$weight_range = '';
+		$corrected_weight_grams = 0;
+
+		// Check if it contains a range (dash or hyphen)
+		if (strpos($weight_string, '-') !== false || strpos($weight_string, '–') !== false) {
+			// Split by various dash types
+			$parts = preg_split('/[-–—]/', $weight_string);
+
+			if (count($parts) == 2) {
+				$value1 = $this->parse_weight_value(trim($parts[0]));
+				$value2 = $this->parse_weight_value(trim($parts[1]));
+
+				// Fix the reversed range issue intelligently
+				if ($value1 > $value2) {
+					// Calculate how many decimal places we need to move
+					$divisor = 1;
+					$temp_value1 = $value1;
+
+					// Keep dividing by 10 until value1 becomes less than or equal to value2
+					while ($temp_value1 > $value2 && $divisor <= 10000) { // Max divisor 10000 for safety
+						$divisor *= 10;
+						$temp_value1 = $value1 / $divisor;
+					}
+
+					// Apply the correction if we found a valid divisor
+					if ($temp_value1 <= $value2 && $divisor > 1) {
+						$original_value1 = $value1;
+						$value1 = $temp_value1;
+						error_log("Fixed weight range: {$original_weight} -> {$value1}-{$value2} (original {$original_value1} divided by {$divisor})");
+					}
+				}
+
+				// Create corrected weight range
+				$min_weight = min($value1, $value2);
+				$max_weight = max($value1, $value2);
+				$weight_range = $min_weight . '-' . $max_weight . ' grams';
+
+				// Use the maximum value as the main weight
+				$corrected_weight_grams = $max_weight;
+			} else {
+				// Single value
+				$corrected_weight_grams = $this->parse_weight_value($weight_string);
+			}
+		} else {
+			// Single value
+			$corrected_weight_grams = $this->parse_weight_value($weight_string);
+		}
+
+		return array(
+			'corrected_weight_grams' => round($corrected_weight_grams, 2),
+			'weight_range' => $weight_range,
+			'original_weight' => $original_weight
+		);
+	}
+
+	/**
+	 * Parse weight value from string (same as migrator)
+	 */
+	private function parse_weight_value($value) {
+		// Remove any non-numeric characters except decimal point
+		$value = preg_replace('/[^0-9.]/', '', $value);
+		return (float) $value;
 	}
 }

@@ -157,15 +157,18 @@ $client_secret = get_option('wc_bc_client_secret', '');
 
                     <div class="action-group">
                         <h3><?php _e('Verification Management', 'wc-bc-migrator'); ?></h3>
-                        <p><?php _e('Retry failed verifications and download verification reports.', 'wc-bc-migrator'); ?></p>
+                        <p><?php _e('Retry failed verifications, fix weights, and download verification reports.', 'wc-bc-migrator'); ?></p>
                         <button class="button button-secondary" id="retry-verification">
-							<?php _e('Retry Failed Verifications', 'wc-bc-migrator'); ?>
+                            <?php _e('Retry Failed Verifications', 'wc-bc-migrator'); ?>
+                        </button>
+                        <button class="button button-primary" id="verify-and-fix-weights">
+                            <?php _e('Verify & Fix Weights', 'wc-bc-migrator'); ?>
                         </button>
                         <button class="button button-secondary" id="download-verification-log">
-							<?php _e('Download Verification Log', 'wc-bc-migrator'); ?>
+                            <?php _e('Download Verification Log', 'wc-bc-migrator'); ?>
                         </button>
                         <button class="button button-secondary" id="view-failed-verifications">
-							<?php _e('View Failed Verifications', 'wc-bc-migrator'); ?>
+                            <?php _e('View Failed Verifications', 'wc-bc-migrator'); ?>
                         </button>
                     </div>
                 </div>

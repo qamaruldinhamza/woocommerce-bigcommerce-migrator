@@ -732,12 +732,45 @@
         });
     };
 
+    // Verify and fix weights
+    WCBCMigrator.verifyAndFixWeights = function(e) {
+        e.preventDefault();
+        var button = $(e.target);
+        var batchSize = $('#verify-batch-size').val();
+
+        button.prop('disabled', true).text('Verifying & Fixing Weights...');
+
+        $.ajax({
+            url: wcBcMigrator.apiUrl + 'verification/update-weights',
+            method: 'POST',
+            data: { batch_size: parseInt(batchSize) },
+            beforeSend: function(xhr) {
+                xhr.setRequestHeader('X-WP-Nonce', wcBcMigrator.nonce);
+            },
+            success: function(data) {
+                if (data.success) {
+                    WCBCMigrator.addLog('success', 'Weight verification completed: ' + data.updated + ' products updated, ' + data.failed + ' failed');
+                    WCBCMigrator.loadVerificationStats();
+                } else {
+                    WCBCMigrator.addLog('error', 'Error verifying weights: ' + data.message);
+                }
+            },
+            error: function() {
+                WCBCMigrator.addLog('error', 'Failed to verify and fix weights');
+            },
+            complete: function() {
+                button.prop('disabled', false).text('Verify & Fix Weights');
+            }
+        });
+    };
+
     // Verification actions
     $('#init-verification').on('click', this.initVerification.bind(this));
     $('#populate-verification').on('click', this.populateVerification.bind(this));
     $('#start-verification').on('click', this.startVerification.bind(this));
     $('#stop-verification').on('click', this.stopVerification.bind(this));
     $('#retry-verification').on('click', this.retryVerification.bind(this));
+    $('#verify-and-fix-weights').on('click', this.verifyAndFixWeights.bind(this));
 
     $('.tab').on('click', function() {
         var tabId = $(this).data('tab');

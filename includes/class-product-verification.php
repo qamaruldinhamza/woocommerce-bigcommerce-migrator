@@ -371,22 +371,19 @@ class WC_BC_Product_Verification {
 	public function verify_and_update_weights($batch_size = 20) {
 		global $wpdb;
 
-		// Get verified products to update weights
-		$verified_products = $wpdb->get_results($wpdb->prepare(
-			"SELECT v.*, m.wc_product_id 
-         FROM {$this->verification_table} v
-         JOIN {$wpdb->prefix}" . WC_BC_MIGRATOR_TABLE . " m ON v.wc_product_id = m.wc_product_id
-         WHERE v.verification_status = 'verified' 
-         AND m.wc_variation_id IS NULL
-         ORDER BY v.id ASC 
+		// Get pending products from verification table to verify AND update weights
+		$pending_products = $wpdb->get_results($wpdb->prepare(
+			"SELECT * FROM {$this->verification_table} 
+         WHERE verification_status = 'pending' 
+         ORDER BY id ASC 
          LIMIT %d",
 			$batch_size
 		));
 
-		if (empty($verified_products)) {
+		if (empty($pending_products)) {
 			return array(
 				'success' => true,
-				'message' => 'No verified products to update',
+				'message' => 'No pending products to verify and update',
 				'updated' => 0,
 				'failed' => 0
 			);
@@ -395,7 +392,7 @@ class WC_BC_Product_Verification {
 		$updated = 0;
 		$failed = 0;
 
-		foreach ($verified_products as $product_record) {
+		foreach ($pending_products as $product_record) {
 			$result = $this->update_single_product_weight($product_record);
 
 			if ($result['updated']) {
@@ -410,9 +407,10 @@ class WC_BC_Product_Verification {
 
 		return array(
 			'success' => true,
-			'processed' => count($verified_products),
+			'processed' => count($pending_products),
 			'updated' => $updated,
-			'failed' => $failed
+			'failed' => $failed,
+			'remaining' => $this->get_pending_count()
 		);
 	}
 

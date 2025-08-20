@@ -220,7 +220,7 @@ class WC_BC_BigCommerce_API {
 	 * Get a specific product from BigCommerce
 	 */
 	public function get_product($product_id) {
-		$endpoint = "/catalog/products/{$product_id}";
+		$endpoint = "catalog/products/{$product_id}";
 		return $this->make_request($endpoint, 'GET'); // Just pass the endpoint
 	}
 

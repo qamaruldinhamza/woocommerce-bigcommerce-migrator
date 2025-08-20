@@ -643,7 +643,7 @@
         $('#stop-verification').prop('disabled', false);
         $('#verification-live-log').show();
 
-        this.addVerificationLogEntry('Starting verification process...');
+        this.addVerificationLogEntry('Starting verification and weight fixing process...');
         this.processVerificationBatch(batchSize);
 
         // Set up interval to continue processing
@@ -651,13 +651,13 @@
             if (WCBCMigrator.isVerificationRunning) {
                 WCBCMigrator.processVerificationBatch(batchSize);
             }
-        }, 3000);
+        }, 3000); // Process every 3 seconds
     };
 
     // Process a single verification batch
     WCBCMigrator.processVerificationBatch = function(batchSize) {
         $.ajax({
-            url: wcBcMigrator.apiUrl + 'verification/verify',
+            url: wcBcMigrator.apiUrl + 'verification/update-weights', // Changed to weight endpoint
             method: 'POST',
             data: { batch_size: parseInt(batchSize) },
             beforeSend: function(xhr) {
@@ -665,13 +665,16 @@
             },
             success: function(data) {
                 if (data.success) {
-                    WCBCMigrator.addVerificationLogEntry('Batch processed: ' + data.verified + ' verified, ' + data.failed + ' failed. Remaining: ' + data.remaining);
+                    WCBCMigrator.addVerificationLogEntry('Verification batch completed: ' + data.updated + ' products verified and weight fixed, ' + data.failed + ' failed. Remaining: ' + (data.remaining || 0));
+
+                    // Update stats
                     WCBCMigrator.loadVerificationStats();
+                    WCBCMigrator.updateVerificationProgress();
 
                     // Stop if no more pending
                     if (data.remaining === 0 || data.processed === 0) {
                         WCBCMigrator.stopVerification();
-                        WCBCMigrator.addLog('success', 'Verification completed!');
+                        WCBCMigrator.addLog('success', 'Verification and weight fixing completed!');
                     }
                 } else {
                     WCBCMigrator.addVerificationLogEntry('Error: ' + data.message, 'error');
@@ -683,18 +686,6 @@
                 WCBCMigrator.stopVerification();
             }
         });
-    };
-
-    // Stop verification process
-    WCBCMigrator.stopVerification = function() {
-        this.isVerificationRunning = false;
-        if (this.verificationInterval) {
-            clearInterval(this.verificationInterval);
-            this.verificationInterval = null;
-        }
-
-        $('#start-verification').prop('disabled', false);
-        $('#stop-verification').prop('disabled', true);
     };
 
     // Add verification log entry
@@ -815,15 +806,11 @@
 
     // Update the existing stopVerification method to handle both types
     WCBCMigrator.stopVerification = function() {
-        // Stop regular verification
         this.isVerificationRunning = false;
         if (this.verificationInterval) {
             clearInterval(this.verificationInterval);
             this.verificationInterval = null;
         }
-
-        // Stop weight verification
-        this.stopWeightVerification();
 
         $('#start-verification').prop('disabled', false);
         $('#stop-verification').prop('disabled', true);

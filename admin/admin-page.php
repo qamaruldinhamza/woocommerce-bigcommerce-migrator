@@ -144,7 +144,7 @@ $client_secret = get_option('wc_bc_client_secret', '');
                             <input type="number" class="batch-size-input" id="verify-batch-size" value="50" min="1" max="200">
                         </label>
                         <button class="button" id="start-verification">
-							<?php _e('Start Verification', 'wc-bc-migrator'); ?>
+                            <?php _e('Start Verification & Weight Fix', 'wc-bc-migrator'); ?>
                         </button>
                         <button class="button button-secondary" id="stop-verification" disabled>
 							<?php _e('Stop Verification', 'wc-bc-migrator'); ?>

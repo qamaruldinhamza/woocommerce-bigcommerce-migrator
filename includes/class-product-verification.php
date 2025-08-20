@@ -472,22 +472,22 @@ class WC_BC_Product_Verification {
 			);
 
 			// Prepare custom fields for weight range
-			$custom_fields = array();
 			if (!empty($weight_data['weight_range'])) {
-				$custom_fields[] = array(
-					'name' => 'weight_range_grams',
-					'value' => $weight_data['weight_range']
+				$update_data['custom_fields'] = array(
+					array(
+						'name' => 'weight_range_grams',
+						'value' => $weight_data['weight_range']
+					)
 				);
-			}
-
-			if (!empty($custom_fields)) {
-				$update_data['custom_fields'] = $custom_fields;
 			}
 
 			error_log("Update data: " . json_encode($update_data));
 
+			$clean_product_id = (int) $product_record->bc_product_id;
+			error_log("Original BC ID: {$product_record->bc_product_id}, Clean ID: {$clean_product_id}");
+
 			// Update product in BigCommerce
-			$result = $this->bc_api->update_product($product_record->bc_product_id, $update_data);
+			$result = $this->bc_api->update_product($clean_product_id, $update_data);
 
 			// Check for update errors
 			if (isset($result['error'])) {

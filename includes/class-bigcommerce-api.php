@@ -241,11 +241,14 @@ class WC_BC_BigCommerce_API {
 		return $this->make_request($endpoint, 'GET'); // Fixed
 	}
 
-	/**
-	 * Update a product in BigCommerce
-	 */
 	public function update_product($product_id, $product_data) {
 		$endpoint = "catalog/products/{$product_id}";
-		return $this->make_request($endpoint, 'PUT', $product_data); // Fixed
+
+		// Debug the full URL that will be called
+		$full_url = $this->api_url . $endpoint;
+		error_log("Full update URL: " . $full_url);
+		error_log("Expected format: https://api.bigcommerce.com/stores/{$this->store_hash}/v3/catalog/products/{$product_id}");
+
+		return $this->make_request($endpoint, 'PUT', $product_data);
 	}
 }

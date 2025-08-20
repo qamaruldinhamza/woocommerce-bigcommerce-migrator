@@ -156,42 +156,36 @@ class WC_BC_BigCommerce_API {
 	 * Get products from BigCommerce with pagination
 	 */
 	public function get_products($page = 1, $limit = 250) {
-		$endpoint = '/catalog/products';
+		$endpoint = 'catalog/products'; // Remove leading slash
 
 		$params = array(
 			'page' => $page,
-			'limit' => min($limit, 250), // BigCommerce max is 250
-			'include' => 'variants,images' // Include what we need
+			'limit' => min($limit, 250),
+			'include' => 'variants,images'
 		);
 
 		$url = $this->build_url($endpoint, $params);
-
-		return $this->make_request('GET', $url);
+		return $this->make_request($url, 'GET'); // Fixed parameter order
 	}
 
 	/**
 	 * Search for products by name in BigCommerce
 	 */
 	public function search_products_by_name($product_name) {
-		$endpoint = '/catalog/products';
+		$endpoint = 'catalog/products'; // Remove leading slash
 
-		// Use keyword search which searches product names
 		$params = array(
 			'keyword' => urlencode(trim($product_name)),
-			'limit' => 50, // Check more results to ensure accuracy
-			'include' => 'variants' // Include variants if needed
+			'limit' => 50,
+			'include' => 'variants'
 		);
 
 		$url = $this->build_url($endpoint, $params);
-
-		return $this->make_request('GET', $url);
+		return $this->make_request($url, 'GET'); // Fixed parameter order
 	}
 
-	/**
-	 * Helper method to build URL with query parameters
-	 */
 	private function build_url($endpoint, $params = array()) {
-		$base_url = $this->api_url . $endpoint;
+		$base_url = $endpoint; // Don't add $this->api_url here since make_request() adds it
 
 		if (!empty($params)) {
 			$base_url .= '?' . http_build_query($params);
@@ -205,22 +199,20 @@ class WC_BC_BigCommerce_API {
 	 */
 	public function get_product($product_id) {
 		$endpoint = "/catalog/products/{$product_id}";
-		return $this->make_request('GET', $this->api_url . $endpoint);
+		return $this->make_request($endpoint, 'GET'); // Just pass the endpoint
 	}
 
-	/**
-	 * Get a specific product variant from BigCommerce
-	 */
+
 	public function get_product_variant($product_id, $variant_id) {
-		$endpoint = "/catalog/products/{$product_id}/variants/{$variant_id}";
-		return $this->make_request('GET', $this->api_url . $endpoint);
+		$endpoint = "catalog/products/{$product_id}/variants/{$variant_id}";
+		return $this->make_request($endpoint, 'GET'); // Fixed
 	}
 
 	/**
 	 * Update a product in BigCommerce
 	 */
 	public function update_product($product_id, $product_data) {
-		$endpoint = "/catalog/products/{$product_id}";
-		return $this->make_request('PUT', $this->api_url . $endpoint, $product_data);
+		$endpoint = "catalog/products/{$product_id}";
+		return $this->make_request($endpoint, 'PUT', $product_data); // Fixed
 	}
 }

@@ -531,180 +531,225 @@
     });
 
 
-    // Add these variables at the top with your other variables
-    let verificationInterval = null;
-    let isVerificationRunning = false;
+    // Add verification methods to the WCBCMigrator object
+    WCBCMigrator.verificationInterval = null;
+    WCBCMigrator.isVerificationRunning = false;
 
-// Add these functions to your existing JavaScript
+    // Initialize verification system
+    WCBCMigrator.initVerification = function(e) {
+        e.preventDefault();
+        var button = $(e.target);
+        button.prop('disabled', true).text('Initializing...');
 
-// Initialize verification system
-    function initVerification() {
-        showLoading();
+        this.showLoadingOverlay('Initializing verification system...');
 
-        fetch(wcBcAjax.restUrl + 'wc-bc-migrator/v1/verification/init', {
+        $.ajax({
+            url: wcBcMigrator.apiUrl + 'verification/init',
             method: 'POST',
-            headers: {
-                'X-WP-Nonce': wcBcAjax.nonce,
-                'Content-Type': 'application/json'
-            }
-        })
-            .then(response => response.json())
-            .then(data => {
-                hideLoading();
+            beforeSend: function(xhr) {
+                xhr.setRequestHeader('X-WP-Nonce', wcBcMigrator.nonce);
+            },
+            success: function(data) {
                 if (data.success) {
-                    showNotice('Verification system initialized successfully!', 'success');
-                    loadVerificationStats();
+                    WCBCMigrator.addLog('success', 'Verification system initialized successfully!');
+                    WCBCMigrator.loadVerificationStats();
                 } else {
-                    showNotice('Error: ' + data.message, 'error');
+                    WCBCMigrator.addLog('error', 'Error: ' + data.message);
                 }
-            })
-            .catch(error => {
-                hideLoading();
-                showNotice('Error initializing verification: ' + error.message, 'error');
-            });
-    }
+            },
+            error: function() {
+                WCBCMigrator.addLog('error', 'Error initializing verification system');
+            },
+            complete: function() {
+                button.prop('disabled', false).text('Initialize Verification System');
+                WCBCMigrator.hideLoadingOverlay();
+            }
+        });
+    };
 
-// Populate verification table
-    function populateVerification() {
-        showLoading();
+    // Populate verification table
+    WCBCMigrator.populateVerification = function(e) {
+        e.preventDefault();
+        var button = $(e.target);
+        button.prop('disabled', true).text('Populating...');
 
-        fetch(wcBcAjax.restUrl + 'wc-bc-migrator/v1/verification/populate', {
+        this.showLoadingOverlay('Populating verification table...');
+
+        $.ajax({
+            url: wcBcMigrator.apiUrl + 'verification/populate',
             method: 'POST',
-            headers: {
-                'X-WP-Nonce': wcBcAjax.nonce,
-                'Content-Type': 'application/json'
-            }
-        })
-            .then(response => response.json())
-            .then(data => {
-                hideLoading();
+            beforeSend: function(xhr) {
+                xhr.setRequestHeader('X-WP-Nonce', wcBcMigrator.nonce);
+            },
+            success: function(data) {
                 if (data.success) {
-                    showNotice(`Verification table populated! Inserted: ${data.inserted}, Skipped: ${data.skipped}`, 'success');
-                    loadVerificationStats();
+                    WCBCMigrator.addLog('success', 'Verification table populated! Inserted: ' + data.inserted + ', Skipped: ' + data.skipped);
+                    WCBCMigrator.loadVerificationStats();
                 } else {
-                    showNotice('Error: ' + data.message, 'error');
+                    WCBCMigrator.addLog('error', 'Error: ' + data.message);
                 }
-            })
-            .catch(error => {
-                hideLoading();
-                showNotice('Error populating verification: ' + error.message, 'error');
-            });
-    }
+            },
+            error: function() {
+                WCBCMigrator.addLog('error', 'Error populating verification table');
+            },
+            complete: function() {
+                button.prop('disabled', false).text('Populate Verification Table');
+                WCBCMigrator.hideLoadingOverlay();
+            }
+        });
+    };
 
-// Load verification statistics
-    function loadVerificationStats() {
-        fetch(wcBcAjax.restUrl + 'wc-bc-migrator/v1/verification/stats', {
+    // Load verification statistics
+    WCBCMigrator.loadVerificationStats = function() {
+        $.ajax({
+            url: wcBcMigrator.apiUrl + 'verification/stats',
             method: 'GET',
-            headers: {
-                'X-WP-Nonce': wcBcAjax.nonce
-            }
-        })
-            .then(response => response.json())
-            .then(data => {
+            beforeSend: function(xhr) {
+                xhr.setRequestHeader('X-WP-Nonce', wcBcMigrator.nonce);
+            },
+            success: function(data) {
                 if (data.success && data.stats) {
-                    updateVerificationStats(data.stats);
+                    WCBCMigrator.updateVerificationStats(data.stats);
                 }
-            });
-    }
+            }
+        });
+    };
 
-// Update verification statistics display
-    function updateVerificationStats(stats) {
-        document.getElementById('verify-stat-total').textContent = stats.total || 0;
-        document.getElementById('verify-stat-pending').textContent = stats.pending || 0;
-        document.getElementById('verify-stat-verified').textContent = stats.verified || 0;
-        document.getElementById('verify-stat-failed').textContent = stats.failed || 0;
-    }
+    // Update verification statistics display
+    WCBCMigrator.updateVerificationStats = function(stats) {
+        $('#verify-stat-total').text(stats.total || 0);
+        $('#verify-stat-pending').text(stats.pending || 0);
+        $('#verify-stat-verified').text(stats.verified || 0);
+        $('#verify-stat-failed').text(stats.failed || 0);
+    };
 
-// Start verification process
-    function startVerification() {
-        const batchSize = document.getElementById('verify-batch-size').value;
-        isVerificationRunning = true;
+    // Start verification process
+    WCBCMigrator.startVerification = function(e) {
+        e.preventDefault();
+        if (this.isVerificationRunning) return;
 
-        document.getElementById('start-verification').disabled = true;
-        document.getElementById('stop-verification').disabled = false;
-        document.getElementById('verification-live-log').style.display = 'block';
+        var batchSize = $('#verify-batch-size').val();
+        this.isVerificationRunning = true;
 
-        // Start the verification process
-        processVerificationBatch(batchSize);
+        $('#start-verification').prop('disabled', true);
+        $('#stop-verification').prop('disabled', false);
+        $('#verification-live-log').show();
+
+        this.addVerificationLogEntry('Starting verification process...');
+        this.processVerificationBatch(batchSize);
 
         // Set up interval to continue processing
-        verificationInterval = setInterval(() => {
-            if (isVerificationRunning) {
-                processVerificationBatch(batchSize);
+        this.verificationInterval = setInterval(function() {
+            if (WCBCMigrator.isVerificationRunning) {
+                WCBCMigrator.processVerificationBatch(batchSize);
             }
-        }, 3000); // Process every 3 seconds
-    }
+        }, 3000);
+    };
 
-// Process a single verification batch
-    function processVerificationBatch(batchSize) {
-        fetch(wcBcAjax.restUrl + 'wc-bc-migrator/v1/verification/verify', {
+    // Process a single verification batch
+    WCBCMigrator.processVerificationBatch = function(batchSize) {
+        $.ajax({
+            url: wcBcMigrator.apiUrl + 'verification/verify',
             method: 'POST',
-            headers: {
-                'X-WP-Nonce': wcBcAjax.nonce,
-                'Content-Type': 'application/json'
+            data: { batch_size: parseInt(batchSize) },
+            beforeSend: function(xhr) {
+                xhr.setRequestHeader('X-WP-Nonce', wcBcMigrator.nonce);
             },
-            body: JSON.stringify({ batch_size: parseInt(batchSize) })
-        })
-            .then(response => response.json())
-            .then(data => {
+            success: function(data) {
                 if (data.success) {
-                    addVerificationLogEntry(`Batch processed: ${data.verified} verified, ${data.failed} failed. Remaining: ${data.remaining}`);
-
-                    // Update stats
-                    loadVerificationStats();
+                    WCBCMigrator.addVerificationLogEntry('Batch processed: ' + data.verified + ' verified, ' + data.failed + ' failed. Remaining: ' + data.remaining);
+                    WCBCMigrator.loadVerificationStats();
 
                     // Stop if no more pending
                     if (data.remaining === 0 || data.processed === 0) {
-                        stopVerification();
-                        showNotice('Verification completed!', 'success');
+                        WCBCMigrator.stopVerification();
+                        WCBCMigrator.addLog('success', 'Verification completed!');
                     }
                 } else {
-                    addVerificationLogEntry(`Error: ${data.message}`, 'error');
-                    stopVerification();
+                    WCBCMigrator.addVerificationLogEntry('Error: ' + data.message, 'error');
+                    WCBCMigrator.stopVerification();
                 }
-            })
-            .catch(error => {
-                addVerificationLogEntry(`Error: ${error.message}`, 'error');
-                stopVerification();
-            });
-    }
+            },
+            error: function() {
+                WCBCMigrator.addVerificationLogEntry('Error processing verification batch', 'error');
+                WCBCMigrator.stopVerification();
+            }
+        });
+    };
 
-// Stop verification process
-    function stopVerification() {
-        isVerificationRunning = false;
-        if (verificationInterval) {
-            clearInterval(verificationInterval);
-            verificationInterval = null;
+    // Stop verification process
+    WCBCMigrator.stopVerification = function() {
+        this.isVerificationRunning = false;
+        if (this.verificationInterval) {
+            clearInterval(this.verificationInterval);
+            this.verificationInterval = null;
         }
 
-        document.getElementById('start-verification').disabled = false;
-        document.getElementById('stop-verification').disabled = true;
-    }
+        $('#start-verification').prop('disabled', false);
+        $('#stop-verification').prop('disabled', true);
+    };
 
-// Add verification log entry
-    function addVerificationLogEntry(message, type = 'info') {
-        const logContainer = document.getElementById('verification-log-entries');
-        const logEntry = document.createElement('div');
-        logEntry.className = `log-entry ${type}`;
-        logEntry.innerHTML = `<span class="timestamp">${new Date().toLocaleTimeString()}</span> ${message}`;
-        logContainer.appendChild(logEntry);
-        logContainer.scrollTop = logContainer.scrollHeight;
-    }
+    // Add verification log entry
+    WCBCMigrator.addVerificationLogEntry = function(message, type) {
+        type = type || 'info';
+        var timestamp = new Date().toLocaleTimeString();
+        var logEntry = $('<div class="log-entry ' + type + '">[' + timestamp + '] ' + message + '</div>');
+        $('#verification-log-entries').prepend(logEntry);
 
-// Event listeners - add these to your existing DOMContentLoaded function
-    document.getElementById('init-verification').addEventListener('click', initVerification);
-    document.getElementById('populate-verification').addEventListener('click', populateVerification);
-    document.getElementById('start-verification').addEventListener('click', startVerification);
-    document.getElementById('stop-verification').addEventListener('click', stopVerification);
+        // Keep only last 50 entries
+        $('#verification-log-entries .log-entry').slice(50).remove();
+    };
 
-// Load verification stats when verification tab is activated
-    document.addEventListener('DOMContentLoaded', function() {
-        // Add to your existing tab switching logic
-        document.querySelectorAll('.tab[data-tab="verification"]').forEach(tab => {
-            tab.addEventListener('click', function() {
-                loadVerificationStats();
-            });
+    // Retry verification
+    WCBCMigrator.retryVerification = function(e) {
+        e.preventDefault();
+        var button = $(e.target);
+        var batchSize = $('#verify-batch-size').val();
+
+        button.prop('disabled', true).text('Retrying...');
+
+        $.ajax({
+            url: wcBcMigrator.apiUrl + 'verification/retry',
+            method: 'POST',
+            data: { batch_size: parseInt(batchSize) },
+            beforeSend: function(xhr) {
+                xhr.setRequestHeader('X-WP-Nonce', wcBcMigrator.nonce);
+            },
+            success: function(data) {
+                if (data.success) {
+                    WCBCMigrator.addLog('success', 'Retried failed verifications');
+                    WCBCMigrator.loadVerificationStats();
+                } else {
+                    WCBCMigrator.addLog('error', 'Error retrying verifications: ' + data.message);
+                }
+            },
+            error: function() {
+                WCBCMigrator.addLog('error', 'Failed to retry verifications');
+            },
+            complete: function() {
+                button.prop('disabled', false).text('Retry Failed Verifications');
+            }
         });
+    };
+
+    // Verification actions
+    $('#init-verification').on('click', this.initVerification.bind(this));
+    $('#populate-verification').on('click', this.populateVerification.bind(this));
+    $('#start-verification').on('click', this.startVerification.bind(this));
+    $('#stop-verification').on('click', this.stopVerification.bind(this));
+    $('#retry-verification').on('click', this.retryVerification.bind(this));
+
+    $('.tab').on('click', function() {
+        var tabId = $(this).data('tab');
+        $('.tab').removeClass('active');
+        $(this).addClass('active');
+        $('.tab-content').removeClass('active');
+        $('#' + tabId + '-tab').addClass('active');
+
+        // Load verification stats when verification tab is activated
+        if (tabId === 'verification') {
+            WCBCMigrator.loadVerificationStats();
+        }
     });
 
 })(jQuery);

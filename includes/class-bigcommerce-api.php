@@ -118,10 +118,6 @@ class WC_BC_BigCommerce_API {
 		return $this->make_request("pricelists/{$price_list_id}/records", 'POST', $record_data);
 	}
 
-	public function create_customer($customer_data) {
-		return $this->make_request('customers', 'POST', $customer_data);
-	}
-
 	public function test_connection() {
 		// Test the connection by fetching store information
 		$response = $this->make_request('store');
@@ -234,5 +230,37 @@ class WC_BC_BigCommerce_API {
 		$endpoint = "catalog/products/{$product_id}";
 
 		return $this->make_request($endpoint, 'PUT', $product_data);
+	}
+
+	/**
+	 * Create a customer in BigCommerce
+	 */
+	public function create_customer($customer_data) {
+		$endpoint = "customers";
+		return $this->make_request($endpoint, 'POST', $customer_data);
+	}
+
+	/**
+	 * Get customer groups
+	 */
+	public function get_customer_groups() {
+		$endpoint = "customer_groups";
+		return $this->make_request($endpoint, 'GET');
+	}
+
+	/**
+	 * Get a specific customer
+	 */
+	public function get_customer($customer_id) {
+		$endpoint = "customers/{$customer_id}";
+		return $this->make_request($endpoint, 'GET');
+	}
+
+	/**
+	 * Update a customer
+	 */
+	public function update_customer($customer_id, $customer_data) {
+		$endpoint = "customers/{$customer_id}";
+		return $this->make_request($endpoint, 'PUT', $customer_data);
 	}
 }

@@ -121,6 +121,33 @@ class WC_BC_REST_API {
 			),
 		));
 
+
+		// Customer migration endpoints
+		register_rest_route('wc-bc-migrator/v1', '/customers/prepare', array(
+			'methods' => 'POST',
+			'callback' => array($this, 'prepare_customers'),
+			'permission_callback' => array($this, 'check_permission'),
+		));
+
+		register_rest_route('wc-bc-migrator/v1', '/customers/migrate', array(
+			'methods' => 'POST',
+			'callback' => array($this, 'migrate_customers_batch'),
+			'permission_callback' => array($this, 'check_permission'),
+			'args' => array(
+				'batch_size' => array(
+					'required' => false,
+					'default' => 10,
+					'sanitize_callback' => 'absint',
+				),
+			),
+		));
+
+		register_rest_route('wc-bc-migrator/v1', '/customers/stats', array(
+			'methods' => 'GET',
+			'callback' => array($this, 'get_customer_stats'),
+			'permission_callback' => array($this, 'check_permission'),
+		));
+
 	}
 
 	public function check_permission() {
@@ -304,6 +331,64 @@ class WC_BC_REST_API {
 			$result = $verifier->verify_and_update_weights($batch_size);
 
 			return new WP_REST_Response($result, 200);
+		} catch (Exception $e) {
+			return new WP_REST_Response(array(
+				'success' => false,
+				'message' => $e->getMessage()
+			), 500);
+		}
+	}
+
+
+	// Callback methods
+	public function prepare_customers() {
+		try {
+			$migrator = new WC_BC_Customer_Migrator();
+			$result = $migrator->prepare_customers();
+			return new WP_REST_Response($result, 200);
+		} catch (Exception $e) {
+			return new WP_REST_Response(array(
+				'success' => false,
+				'message' => $e->getMessage()
+			), 500);
+		}
+	}
+
+	public function migrate_customers_batch($request) {
+		$batch_size = $request->get_param('batch_size') ?: 10;
+
+		try {
+			$migrator = new WC_BC_Customer_Migrator();
+			$result = $migrator->process_batch($batch_size);
+			return new WP_REST_Response($result, 200);
+		} catch (Exception $e) {
+			return new WP_REST_Response(array(
+				'success' => false,
+				'message' => $e->getMessage()
+			), 500);
+		}
+	}
+
+	public function get_customer_stats() {
+		try {
+			$stats = WC_BC_Customer_Database::get_customer_migration_stats();
+
+			$formatted_stats = array(
+				'total' => 0,
+				'pending' => 0,
+				'success' => 0,
+				'error' => 0,
+			);
+
+			foreach ($stats as $stat) {
+				$formatted_stats[$stat->status] = (int) $stat->count;
+				$formatted_stats['total'] += (int) $stat->count;
+			}
+
+			return new WP_REST_Response(array(
+				'success' => true,
+				'stats' => $formatted_stats
+			), 200);
 		} catch (Exception $e) {
 			return new WP_REST_Response(array(
 				'success' => false,

@@ -25,6 +25,7 @@ $client_secret = get_option('wc_bc_client_secret', '');
 			<div class="tabs">
 				<div class="tab active" data-tab="migration"><?php _e('Migration', 'wc-bc-migrator'); ?></div>
                 <div class="tab" data-tab="verification"><?php _e('Verification', 'wc-bc-migrator'); ?></div>
+                <div class="tab" data-tab="customers"><?php _e('Customer Migration', 'wc-bc-migrator'); ?></div>
                 <div class="tab" data-tab="settings"><?php _e('Settings', 'wc-bc-migrator'); ?></div>
 				<div class="tab" data-tab="mapping"><?php _e('Category Mapping', 'wc-bc-migrator'); ?></div>
 				<div class="tab" data-tab="logs"><?php _e('Activity Logs', 'wc-bc-migrator'); ?></div>
@@ -198,6 +199,78 @@ $client_secret = get_option('wc_bc_client_secret', '');
                 <div class="log-container" id="verification-live-log" style="display: none;">
                     <h3><?php _e('Verification Progress', 'wc-bc-migrator'); ?></h3>
                     <div id="verification-log-entries"></div>
+                </div>
+            </div>
+
+            <!-- Customer Migration Tab -->
+            <div class="tab-content" id="customers-tab">
+                <!-- Customer Migration Statistics -->
+                <div class="wc-bc-stats" id="customer-stats">
+                    <div class="stat-card">
+                        <h3><?php _e('Total Customers', 'wc-bc-migrator'); ?></h3>
+                        <div class="number" id="customer-stat-total">0</div>
+                    </div>
+                    <div class="stat-card pending">
+                        <h3><?php _e('Pending', 'wc-bc-migrator'); ?></h3>
+                        <div class="number" id="customer-stat-pending">0</div>
+                    </div>
+                    <div class="stat-card success">
+                        <h3><?php _e('Migrated', 'wc-bc-migrator'); ?></h3>
+                        <div class="number" id="customer-stat-success">0</div>
+                    </div>
+                    <div class="stat-card error">
+                        <h3><?php _e('Failed', 'wc-bc-migrator'); ?></h3>
+                        <div class="number" id="customer-stat-error">0</div>
+                    </div>
+                </div>
+
+                <!-- Customer Migration Actions -->
+                <div class="wc-bc-actions">
+                    <div class="action-group">
+                        <h3><?php _e('Initialize Customer Migration', 'wc-bc-migrator'); ?></h3>
+                        <p><?php _e('Prepare all WooCommerce customers for migration. This will scan your customer accounts and create migration records.', 'wc-bc-migrator'); ?></p>
+                        <button class="button" id="prepare-customers">
+                            <?php _e('Prepare Customers for Migration', 'wc-bc-migrator'); ?>
+                        </button>
+                        <button class="button button-danger" id="reset-customer-migration" style="display: none;">
+                            <?php _e('Reset Customer Migration Data', 'wc-bc-migrator'); ?>
+                        </button>
+                    </div>
+
+                    <div class="action-group">
+                        <h3><?php _e('Batch Customer Migration', 'wc-bc-migrator'); ?></h3>
+                        <p><?php _e('Migrate customers in batches to avoid timeouts. Includes customer data, addresses, and B2B information.', 'wc-bc-migrator'); ?></p>
+                        <label><?php _e('Batch Size:', 'wc-bc-migrator'); ?>
+                            <input type="number" class="batch-size-input" id="customer-batch-size" value="10" min="1" max="50">
+                        </label>
+                        <button class="button" id="start-customer-batch">
+                            <?php _e('Start Customer Migration', 'wc-bc-migrator'); ?>
+                        </button>
+                        <button class="button button-secondary" id="stop-customer-batch" disabled>
+                            <?php _e('Stop Migration', 'wc-bc-migrator'); ?>
+                        </button>
+
+                        <div class="progress-bar" id="customer-progress-bar">
+                            <div class="progress-fill" id="customer-progress-fill">0%</div>
+                        </div>
+                    </div>
+
+                    <div class="action-group">
+                        <h3><?php _e('Error Handling', 'wc-bc-migrator'); ?></h3>
+                        <p><?php _e('Retry migration for customers that failed during the initial process.', 'wc-bc-migrator'); ?></p>
+                        <button class="button button-secondary" id="retry-customer-errors">
+                            <?php _e('Retry Failed Customers', 'wc-bc-migrator'); ?>
+                        </button>
+                        <button class="button button-secondary" id="export-customer-errors">
+                            <?php _e('Export Customer Error Report', 'wc-bc-migrator'); ?>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Customer Migration Log -->
+                <div class="log-container" id="customer-live-log" style="display: none;">
+                    <h3><?php _e('Customer Migration Progress', 'wc-bc-migrator'); ?></h3>
+                    <div id="customer-log-entries"></div>
                 </div>
             </div>
 

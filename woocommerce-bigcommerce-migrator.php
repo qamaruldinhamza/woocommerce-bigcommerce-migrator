@@ -30,6 +30,9 @@ require_once WC_BC_MIGRATOR_PATH . "includes/class-rest-api.php";
 require_once WC_BC_MIGRATOR_PATH . "includes/class-category-migrator.php";
 require_once WC_BC_MIGRATOR_PATH . "includes/class-attribute-migrator.php";
 require_once WC_BC_MIGRATOR_PATH . "includes/class-b2b-handler.php";
+require_once WC_BC_MIGRATOR_PATH . "includes/class-product-verification.php";
+require_once WC_BC_MIGRATOR_PATH . "includes/class-customer-database.php";
+require_once WC_BC_MIGRATOR_PATH . "includes/class-customer-database.php";
 
 
 // Initialize the plugin

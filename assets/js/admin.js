@@ -5,12 +5,15 @@
         isRunning: false,
         shouldStop: false,
         currentStep: 'idle',
+        isCustomerMigrationRunning: false,
+        shouldStopCustomers: false,
 
         init: function() {
             this.bindEvents();
             this.hideLoadingOverlay();
             this.loadStats();
             this.checkMigrationStatus();
+            this.loadCustomerStats();
         },
 
         bindEvents: function() {
@@ -21,6 +24,11 @@
                 $(this).addClass('active');
                 $('.tab-content').removeClass('active');
                 $('#' + tabId + '-tab').addClass('active');
+
+                if (tabId === 'customers') {
+                    WCBCMigrator.loadCustomerStats();
+                }
+
             });
 
             // Migration actions
@@ -52,6 +60,18 @@
             $('#stop-verification').on('click', this.stopVerification.bind(this));
             $('#retry-verification').on('click', this.retryVerification.bind(this));
             $('#verify-and-fix-weights').on('click', this.verifyAndFixWeights.bind(this));
+
+
+
+
+            // Add these event bindings to the bindEvents function
+            $('#prepare-customers').on('click', this.prepareCustomers.bind(this));
+            $('#start-customer-batch').on('click', this.startCustomerMigration.bind(this));
+            $('#stop-customer-batch').on('click', this.stopCustomerMigration.bind(this));
+            $('#retry-customer-errors').on('click', this.retryCustomerErrors.bind(this));
+            $('#reset-customer-migration').on('click', this.resetCustomerMigration.bind(this));
+            $('#export-customer-errors').on('click', this.exportCustomerErrors.bind(this));
+
         },
 
         checkMigrationStatus: function() {
@@ -531,6 +551,216 @@
 
         hideLoadingOverlay: function() {
             $('#loading-overlay').removeClass('active');
+        },
+
+        // Load customer migration statistics
+        loadCustomerStats: function() {
+            $.ajax({
+                url: wcBcMigrator.apiUrl + 'customers/stats',
+                method: 'GET',
+                beforeSend: function(xhr) {
+                    xhr.setRequestHeader('X-WP-Nonce', wcBcMigrator.nonce);
+                },
+                success: function(response) {
+                    if (response.success && response.stats) {
+                        $('#customer-stat-total').text(response.stats.total || 0);
+                        $('#customer-stat-pending').text(response.stats.pending || 0);
+                        $('#customer-stat-success').text(response.stats.success || 0);
+                        $('#customer-stat-error').text(response.stats.error || 0);
+
+                        // Show reset button if there's data
+                        if (response.stats.total > 0) {
+                            $('#reset-customer-migration').show();
+                        }
+                    }
+                },
+                error: function() {
+                    console.log('Failed to load customer stats');
+                }
+            });
+        },
+
+// Prepare customers for migration
+        prepareCustomers: function(e) {
+            e.preventDefault();
+            var button = $(e.target);
+            button.prop('disabled', true).text('Preparing...');
+
+            this.showLoadingOverlay('Preparing customers for migration...');
+
+            $.ajax({
+                url: wcBcMigrator.apiUrl + 'customers/prepare',
+                method: 'POST',
+                beforeSend: function(xhr) {
+                    xhr.setRequestHeader('X-WP-Nonce', wcBcMigrator.nonce);
+                },
+                success: function(response) {
+                    if (response.success) {
+                        WCBCMigrator.addCustomerLog('success', 'Prepared ' + response.inserted + ' customers for migration');
+                        if (response.skipped > 0) {
+                            WCBCMigrator.addCustomerLog('warning', 'Skipped ' + response.skipped + ' customers (already prepared)');
+                        }
+                        WCBCMigrator.loadCustomerStats();
+                    } else {
+                        WCBCMigrator.addCustomerLog('error', 'Error: ' + response.message);
+                    }
+                },
+                error: function() {
+                    WCBCMigrator.addCustomerLog('error', 'Failed to prepare customers');
+                },
+                complete: function() {
+                    button.prop('disabled', false).text('Prepare Customers for Migration');
+                    WCBCMigrator.hideLoadingOverlay();
+                }
+            });
+        },
+
+// Start customer migration
+        startCustomerMigration: function(e) {
+            e.preventDefault();
+            if (this.isCustomerMigrationRunning) return;
+
+            this.isCustomerMigrationRunning = true;
+            this.shouldStopCustomers = false;
+
+            $('#start-customer-batch').prop('disabled', true);
+            $('#stop-customer-batch').prop('disabled', false);
+            $('#customer-progress-bar').show();
+            $('#customer-live-log').show();
+
+            this.addCustomerLog('info', 'Starting customer migration...');
+            this.processCustomerBatch();
+        },
+
+// Process customer batch
+        processCustomerBatch: function() {
+            if (this.shouldStopCustomers) {
+                this.finishCustomerMigration();
+                return;
+            }
+
+            var batchSize = $('#customer-batch-size').val() || 10;
+
+            $.ajax({
+                url: wcBcMigrator.apiUrl + 'customers/migrate',
+                method: 'POST',
+                data: { batch_size: batchSize },
+                beforeSend: function(xhr) {
+                    xhr.setRequestHeader('X-WP-Nonce', wcBcMigrator.nonce);
+                },
+                success: function(response) {
+                    if (response.success) {
+                        if (response.processed > 0) {
+                            WCBCMigrator.addCustomerLog('success', 'Processed ' + response.processed + ' customers');
+                        }
+
+                        if (response.errors > 0) {
+                            WCBCMigrator.addCustomerLog('error', response.errors + ' customers failed');
+                        }
+
+                        WCBCMigrator.loadCustomerStats();
+                        WCBCMigrator.updateCustomerProgress();
+
+                        if (response.remaining > 0 && !WCBCMigrator.shouldStopCustomers) {
+                            setTimeout(function() {
+                                WCBCMigrator.processCustomerBatch();
+                            }, 1500); // 1.5 second delay between batches
+                        } else {
+                            WCBCMigrator.finishCustomerMigration();
+                        }
+                    } else {
+                        WCBCMigrator.addCustomerLog('error', 'Error: ' + response.message);
+                        WCBCMigrator.finishCustomerMigration();
+                    }
+                },
+                error: function() {
+                    WCBCMigrator.addCustomerLog('error', 'Customer batch processing failed');
+                    WCBCMigrator.finishCustomerMigration();
+                }
+            });
+        },
+
+// Stop customer migration
+        stopCustomerMigration: function(e) {
+            e.preventDefault();
+            this.shouldStopCustomers = true;
+            $('#stop-customer-batch').prop('disabled', true).text('Stopping...');
+        },
+
+// Finish customer migration
+        finishCustomerMigration: function() {
+            this.isCustomerMigrationRunning = false;
+            this.shouldStopCustomers = false;
+
+            $('#start-customer-batch').prop('disabled', false);
+            $('#stop-customer-batch').prop('disabled', true).text('Stop Migration');
+
+            this.addCustomerLog('info', 'Customer migration process completed');
+            this.loadCustomerStats();
+        },
+
+// Update customer migration progress
+        updateCustomerProgress: function() {
+            $.ajax({
+                url: wcBcMigrator.apiUrl + 'customers/stats',
+                method: 'GET',
+                beforeSend: function(xhr) {
+                    xhr.setRequestHeader('X-WP-Nonce', wcBcMigrator.nonce);
+                },
+                success: function(response) {
+                    if (response.success && response.stats) {
+                        var total = response.stats.total || 0;
+                        var completed = (response.stats.success || 0) + (response.stats.error || 0);
+                        var percentage = total > 0 ? Math.round((completed / total) * 100) : 0;
+
+                        $('#customer-progress-fill').css('width', percentage + '%').text(percentage + '%');
+                    }
+                }
+            });
+        },
+
+// Add customer log entry
+        addCustomerLog: function(type, message) {
+            var timestamp = new Date().toLocaleTimeString();
+            var logEntry = $('<div class="log-entry ' + type + '">[' + timestamp + '] ' + message + '</div>');
+            $('#customer-log-entries').prepend(logEntry);
+
+            // Keep only last 50 entries
+            $('#customer-log-entries .log-entry').slice(50).remove();
+
+            // Also add to main activity logs
+            this.saveActivityLog(type, '[CUSTOMERS] ' + message);
+        },
+
+// Retry customer errors
+        retryCustomerErrors: function(e) {
+            e.preventDefault();
+            var button = $(e.target);
+            button.prop('disabled', true).text('Retrying...');
+
+            // This would need a new API endpoint for retrying customer errors
+            WCBCMigrator.addCustomerLog('info', 'Retry customer errors functionality coming soon');
+
+            setTimeout(function() {
+                button.prop('disabled', false).text('Retry Failed Customers');
+            }, 2000);
+        },
+
+// Reset customer migration
+        resetCustomerMigration: function(e) {
+            e.preventDefault();
+            if (!confirm('Are you sure you want to reset all customer migration data? This action cannot be undone.')) {
+                return;
+            }
+
+            // This would need a new API endpoint for resetting customer migration
+            WCBCMigrator.addCustomerLog('info', 'Customer migration reset functionality coming soon');
+        },
+
+// Export customer errors
+        exportCustomerErrors: function(e) {
+            e.preventDefault();
+            WCBCMigrator.addCustomerLog('info', 'Export customer errors functionality coming soon');
         }
     };
 

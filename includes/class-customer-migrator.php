@@ -1,0 +1,442 @@
+<?php
+/**
+ * Customer Migrator Class
+ */
+class WC_BC_Customer_Migrator {
+
+	private $bc_api;
+	private $customer_group_mapping;
+	private $wholesale_custom_fields;
+
+	// Define customer group mappings (you'll need to update these with actual BC group IDs)
+	const CUSTOMER_GROUP_MAPPING = array(
+		'customer' => 1, // Default customer group ID in BigCommerce
+		'wholesale_customer' => 2, // Also goes to customer group
+		'subscriber' => 3, // Wholesale customer group ID in BigCommerce
+	);
+
+	public function __construct() {
+		$this->bc_api = new WC_BC_BigCommerce_API();
+		$this->customer_group_mapping = self::CUSTOMER_GROUP_MAPPING;
+		$this->load_wholesale_custom_fields();
+	}
+
+	/**
+	 * Load wholesale custom fields configuration
+	 */
+	private function load_wholesale_custom_fields() {
+		$this->wholesale_custom_fields = get_option('wwlc_option_registration_form_custom_fields', array());
+	}
+
+	/**
+	 * Prepare customers for migration
+	 */
+	public function prepare_customers() {
+		// Get all users with customer-related roles
+		$user_query = new WP_User_Query(array(
+			'role__in' => array('customer', 'wholesale_customer', 'subscriber'),
+			'number' => -1,
+			'fields' => 'all'
+		));
+
+		$users = $user_query->get_results();
+		$inserted = 0;
+		$skipped = 0;
+
+		foreach ($users as $user) {
+			// Check if already exists
+			$existing = WC_BC_Customer_Database::get_customer_by_wp_id($user->ID);
+
+			if (!$existing) {
+				// Determine customer type (prioritize wholesale)
+				$customer_type = 'customer';
+				$user_roles = $user->roles;
+
+				if (in_array('wholesale_customer', $user_roles)) {
+					$customer_type = 'wholesale_customer';
+				} elseif (in_array('subscriber', $user_roles)) {
+					$customer_type = 'customer'; // Subscribers go to regular customer group
+				}
+
+				$result = WC_BC_Customer_Database::insert_customer_mapping(array(
+					'wp_user_id' => $user->ID,
+					'customer_email' => $user->user_email,
+					'customer_type' => $customer_type,
+					'bc_customer_group_id' => $this->customer_group_mapping[$customer_type],
+					'migration_status' => 'pending'
+				));
+
+				if ($result) {
+					$inserted++;
+				} else {
+					$skipped++;
+				}
+			} else {
+				$skipped++;
+			}
+		}
+
+		return array(
+			'success' => true,
+			'total_users' => count($users),
+			'inserted' => $inserted,
+			'skipped' => $skipped
+		);
+	}
+
+	/**
+	 * Migrate a single customer
+	 */
+	public function migrate_customer($wp_user_id) {
+		$user = get_user_by('ID', $wp_user_id);
+
+		if (!$user) {
+			return array('error' => 'User not found');
+		}
+
+		try {
+			// Check if already migrated
+			$existing_mapping = WC_BC_Customer_Database::get_customer_by_wp_id($wp_user_id);
+			if ($existing_mapping && $existing_mapping->bc_customer_id) {
+				return array(
+					'success' => true,
+					'bc_customer_id' => $existing_mapping->bc_customer_id,
+					'already_exists' => true
+				);
+			}
+
+			// Prepare customer data
+			$customer_data = $this->prepare_customer_data($user);
+
+			// Create customer in BigCommerce
+			$result = $this->bc_api->create_customer($customer_data);
+
+			if (isset($result['error'])) {
+				throw new Exception($result['error']);
+			}
+
+			if (!isset($result['data']['id'])) {
+				throw new Exception('No customer ID returned from BigCommerce');
+			}
+
+			$bc_customer_id = $result['data']['id'];
+
+			// Update mapping
+			WC_BC_Customer_Database::update_customer_mapping($wp_user_id, array(
+				'bc_customer_id' => $bc_customer_id,
+				'migration_status' => 'success',
+				'migration_message' => 'Customer migrated successfully'
+			));
+
+			return array(
+				'success' => true,
+				'bc_customer_id' => $bc_customer_id
+			);
+
+		} catch (Exception $e) {
+			WC_BC_Customer_Database::update_customer_mapping($wp_user_id, array(
+				'migration_status' => 'error',
+				'migration_message' => $e->getMessage()
+			));
+
+			return array('error' => $e->getMessage());
+		}
+	}
+
+	/**
+	 * Prepare customer data for BigCommerce
+	 */
+	private function prepare_customer_data($user) {
+		$customer_type = $this->get_customer_type($user);
+
+		// Base customer data
+		$customer_data = array(
+			'email' => $user->user_email,
+			'first_name' => $user->first_name ?: '',
+			'last_name' => $user->last_name ?: '',
+			'customer_group_id' => $this->customer_group_mapping[$customer_type],
+		);
+
+		// Get wholesale/billing data
+		$wholesale_data = $this->get_wholesale_data($user->ID);
+		$billing_data = $this->get_billing_data($user->ID);
+		$shipping_data = $this->get_shipping_data($user->ID);
+
+		// Set phone, country, and company from wholesale data or billing data
+		if (!empty($wholesale_data['phone'])) {
+			$customer_data['phone'] = $wholesale_data['phone'];
+		} elseif (!empty($billing_data['billing_phone'])) {
+			$customer_data['phone'] = $billing_data['billing_phone'];
+		}
+
+		if (!empty($wholesale_data['company_name'])) {
+			$customer_data['company'] = $wholesale_data['company_name'];
+		} elseif (!empty($billing_data['billing_company'])) {
+			$customer_data['company'] = $billing_data['billing_company'];
+		}
+
+		// Prepare addresses
+		$addresses = $this->prepare_customer_addresses($wholesale_data, $billing_data, $shipping_data);
+		if (!empty($addresses)) {
+			$customer_data['addresses'] = $addresses;
+		}
+
+		// Prepare custom fields (form fields)
+		$form_fields = $this->prepare_form_fields($wholesale_data);
+		if (!empty($form_fields)) {
+			$customer_data['form_fields'] = $form_fields;
+		}
+
+		return $customer_data;
+	}
+
+	/**
+	 * Get customer type based on user roles
+	 */
+	private function get_customer_type($user) {
+		if (in_array('wholesale_customer', $user->roles)) {
+			return 'wholesale_customer';
+		}
+		return 'customer';
+	}
+
+	/**
+	 * Get wholesale customer data
+	 */
+	private function get_wholesale_data($user_id) {
+		$wholesale_data = array();
+
+		// Get wholesale custom fields
+		if (!empty($this->wholesale_custom_fields)) {
+			foreach ($this->wholesale_custom_fields as $field) {
+				$field_key = isset($field['field_id']) ? $field['field_id'] : '';
+				if ($field_key) {
+					$value = get_user_meta($user_id, $field_key, true);
+					if (!empty($value)) {
+						$wholesale_data[$field_key] = $value;
+					}
+				}
+			}
+		}
+
+		// Map common wholesale fields
+		$wholesale_fields_map = array(
+			'phone' => 'wwlc_phone',
+			'country' => 'wwlc_country',
+			'address_1' => 'wwlc_address_1',
+			'address_line_2' => 'wwlc_address_line_2',
+			'city' => 'wwlc_city',
+			'state' => 'wwlc_state',
+			'postcode' => 'wwlc_postcode',
+			'company_name' => 'wwlc_company_name',
+			'position_title' => 'wwlc_position_title',
+			'primary_business' => 'wwlc_primary_business',
+			'business_id_type' => 'wwlc_business_id_type',
+			'business_id_number' => 'wwlc_business_id_number',
+			'company_website' => 'wwlc_company_website'
+		);
+
+		foreach ($wholesale_fields_map as $key => $meta_key) {
+			$value = get_user_meta($user_id, $meta_key, true);
+			if (!empty($value)) {
+				$wholesale_data[$key] = $value;
+			}
+		}
+
+		return $wholesale_data;
+	}
+
+	/**
+	 * Get billing data
+	 */
+	private function get_billing_data($user_id) {
+		$billing_fields = array(
+			'billing_first_name', 'billing_last_name', 'billing_company',
+			'billing_address_1', 'billing_address_2', 'billing_city',
+			'billing_state', 'billing_postcode', 'billing_country',
+			'billing_email', 'billing_phone'
+		);
+
+		$billing_data = array();
+		foreach ($billing_fields as $field) {
+			$value = get_user_meta($user_id, $field, true);
+			if (!empty($value)) {
+				$billing_data[$field] = $value;
+			}
+		}
+
+		return $billing_data;
+	}
+
+	/**
+	 * Get shipping data
+	 */
+	private function get_shipping_data($user_id) {
+		$shipping_fields = array(
+			'shipping_first_name', 'shipping_last_name', 'shipping_company',
+			'shipping_address_1', 'shipping_address_2', 'shipping_city',
+			'shipping_state', 'shipping_postcode', 'shipping_country'
+		);
+
+		$shipping_data = array();
+		foreach ($shipping_fields as $field) {
+			$value = get_user_meta($user_id, $field, true);
+			if (!empty($value)) {
+				$shipping_data[$field] = $value;
+			}
+		}
+
+		return $shipping_data;
+	}
+
+	/**
+	 * Prepare customer addresses for BigCommerce
+	 */
+	private function prepare_customer_addresses($wholesale_data, $billing_data, $shipping_data) {
+		$addresses = array();
+
+		// Primary address from wholesale data or billing data
+		$primary_address = array();
+
+		if (!empty($wholesale_data['address_1'])) {
+			$primary_address = array(
+				'first_name' => $wholesale_data['first_name'] ?? '',
+				'last_name' => $wholesale_data['last_name'] ?? '',
+				'company' => $wholesale_data['company_name'] ?? '',
+				'address1' => $wholesale_data['address_1'],
+				'address2' => $wholesale_data['address_line_2'] ?? '',
+				'city' => $wholesale_data['city'] ?? '',
+				'state_or_province' => $wholesale_data['state'] ?? '',
+				'postal_code' => $wholesale_data['postcode'] ?? '',
+				'country_code' => $this->get_country_code($wholesale_data['country'] ?? ''),
+				'phone' => $wholesale_data['phone'] ?? '',
+				'address_type' => 'residential'
+			);
+		} elseif (!empty($billing_data['billing_address_1'])) {
+			$primary_address = array(
+				'first_name' => $billing_data['billing_first_name'] ?? '',
+				'last_name' => $billing_data['billing_last_name'] ?? '',
+				'company' => $billing_data['billing_company'] ?? '',
+				'address1' => $billing_data['billing_address_1'],
+				'address2' => $billing_data['billing_address_2'] ?? '',
+				'city' => $billing_data['billing_city'] ?? '',
+				'state_or_province' => $billing_data['billing_state'] ?? '',
+				'postal_code' => $billing_data['billing_postcode'] ?? '',
+				'country_code' => $this->get_country_code($billing_data['billing_country'] ?? ''),
+				'phone' => $billing_data['billing_phone'] ?? '',
+				'address_type' => 'residential'
+			);
+		}
+
+		if (!empty($primary_address['address1'])) {
+			$addresses[] = $primary_address;
+		}
+
+		// Shipping address (if different from billing)
+		if (!empty($shipping_data['shipping_address_1']) &&
+		    $shipping_data['shipping_address_1'] !== ($billing_data['billing_address_1'] ?? '')) {
+
+			$shipping_address = array(
+				'first_name' => $shipping_data['shipping_first_name'] ?? '',
+				'last_name' => $shipping_data['shipping_last_name'] ?? '',
+				'company' => $shipping_data['shipping_company'] ?? '',
+				'address1' => $shipping_data['shipping_address_1'],
+				'address2' => $shipping_data['shipping_address_2'] ?? '',
+				'city' => $shipping_data['shipping_city'] ?? '',
+				'state_or_province' => $shipping_data['shipping_state'] ?? '',
+				'postal_code' => $shipping_data['shipping_postcode'] ?? '',
+				'country_code' => $this->get_country_code($shipping_data['shipping_country'] ?? ''),
+				'address_type' => 'residential'
+			);
+
+			if (!empty($shipping_address['address1'])) {
+				$addresses[] = $shipping_address;
+			}
+		}
+
+		return $addresses;
+	}
+
+	/**
+	 * Prepare form fields (custom fields) for BigCommerce
+	 */
+	private function prepare_form_fields($wholesale_data) {
+		$form_fields = array();
+
+		// Map wholesale data to form fields
+		$field_mapping = array(
+			'Business ID Type' => $wholesale_data['business_id_type'] ?? '',
+			'Business ID Number' => $wholesale_data['business_id_number'] ?? '',
+			'Primary Business' => $wholesale_data['primary_business'] ?? '',
+			'Position/Title' => $wholesale_data['position_title'] ?? '',
+			'Company Website' => $wholesale_data['company_website'] ?? '',
+		);
+
+		foreach ($field_mapping as $field_name => $value) {
+			if (!empty($value)) {
+				$form_fields[] = array(
+					'name' => $field_name,
+					'value' => $value
+				);
+			}
+		}
+
+		return $form_fields;
+	}
+
+	/**
+	 * Convert country name to country code
+	 */
+	private function get_country_code($country) {
+		// Simple mapping - you can expand this
+		$country_codes = array(
+			'United States' => 'US',
+			'Canada' => 'CA',
+			'United Kingdom' => 'GB',
+			'Australia' => 'AU',
+			'South Korea' => 'KR',
+			// Add more mappings as needed
+		);
+
+		return $country_codes[$country] ?? $country;
+	}
+
+	/**
+	 * Process customer migration batch
+	 */
+	public function process_batch($batch_size = 10) {
+		$pending_customers = WC_BC_Customer_Database::get_pending_customers($batch_size);
+
+		if (empty($pending_customers)) {
+			return array(
+				'success' => true,
+				'message' => 'No pending customers to migrate',
+				'processed' => 0,
+				'errors' => 0
+			);
+		}
+
+		$processed = 0;
+		$errors = 0;
+
+		foreach ($pending_customers as $customer_mapping) {
+			$result = $this->migrate_customer($customer_mapping->wp_user_id);
+
+			if (isset($result['error'])) {
+				$errors++;
+			} else {
+				$processed++;
+			}
+
+			// Add delay to avoid API rate limits
+			usleep(500000); // 0.5 seconds
+		}
+
+		return array(
+			'success' => true,
+			'processed' => $processed,
+			'errors' => $errors,
+			'remaining' => count(WC_BC_Customer_Database::get_pending_customers(1))
+		);
+	}
+}

@@ -33,6 +33,13 @@ class WC_BC_Customer_Migrator {
 	 */
 	public function prepare_customers() {
 		// Get all users with customer-related roles
+		if (!WC_BC_Customer_Database::create_table()) {
+			return array(
+				'success' => false,
+				'message' => 'Failed to create customer migration table'
+			);
+		}
+
 		$user_query = new WP_User_Query(array(
 			'role__in' => array('customer', 'wholesale_customer', 'subscriber'),
 			'number' => -1,

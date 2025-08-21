@@ -10,26 +10,32 @@ class WC_BC_Customer_Database {
 		global $wpdb;
 
 		$table_name = $wpdb->prefix . self::CUSTOMER_MIGRATION_TABLE;
+
+		// Check if table already exists
+		if ($wpdb->get_var("SHOW TABLES LIKE '$table_name'") === $table_name) {
+			return true; // Table already exists
+		}
+
 		$charset_collate = $wpdb->get_charset_collate();
 
 		$sql = "CREATE TABLE $table_name (
-            id bigint(20) NOT NULL AUTO_INCREMENT,
-            wp_user_id bigint(20) NOT NULL,
-            bc_customer_id bigint(20) DEFAULT NULL,
-            customer_email varchar(255) NOT NULL,
-            customer_type varchar(50) NOT NULL DEFAULT 'customer',
-            bc_customer_group_id int(11) DEFAULT NULL,
-            migration_status varchar(20) NOT NULL DEFAULT 'pending',
-            migration_message text,
-            created_at datetime DEFAULT CURRENT_TIMESTAMP,
-            updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            PRIMARY KEY (id),
-            UNIQUE KEY unique_wp_user (wp_user_id),
-            KEY idx_customer_email (customer_email),
-            KEY idx_customer_type (customer_type),
-            KEY idx_migration_status (migration_status),
-            KEY idx_bc_customer_id (bc_customer_id)
-        ) $charset_collate;";
+           id bigint(20) NOT NULL AUTO_INCREMENT,
+           wp_user_id bigint(20) NOT NULL,
+           bc_customer_id bigint(20) DEFAULT NULL,
+           customer_email varchar(255) NOT NULL,
+           customer_type varchar(50) NOT NULL DEFAULT 'customer',
+           bc_customer_group_id int(11) DEFAULT NULL,
+           migration_status varchar(20) NOT NULL DEFAULT 'pending',
+           migration_message text,
+           created_at datetime DEFAULT CURRENT_TIMESTAMP,
+           updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+           PRIMARY KEY (id),
+           UNIQUE KEY unique_wp_user (wp_user_id),
+           KEY idx_customer_email (customer_email),
+           KEY idx_customer_type (customer_type),
+           KEY idx_migration_status (migration_status),
+           KEY idx_bc_customer_id (bc_customer_id)
+       ) $charset_collate;";
 
 		require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
 		dbDelta($sql);

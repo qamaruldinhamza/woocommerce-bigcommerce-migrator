@@ -158,7 +158,7 @@ class WC_BC_Customer_Migrator {
 				'migration_message' => $e->getMessage()
 			));
 
-			return array('error' => $e->getMessage());
+			return array('error' => json_decode($e->getMessage()));
 		}
 	}
 
@@ -396,9 +396,8 @@ class WC_BC_Customer_Migrator {
 		$addresses = array();
 
 		// Primary address from wholesale data or billing data
-		$primary_address = array();
-
 		if (!empty($wholesale_data['address_1'])) {
+			$country_code = WC_BC_Location_Mapper::get_country_code($wholesale_data['country'] ?? '');
 			$primary_address = array(
 				'first_name' => $wholesale_data['first_name'] ?? '',
 				'last_name' => $wholesale_data['last_name'] ?? '',
@@ -406,13 +405,14 @@ class WC_BC_Customer_Migrator {
 				'address1' => $wholesale_data['address_1'],
 				'address2' => $wholesale_data['address_line_2'] ?? '',
 				'city' => $wholesale_data['city'] ?? '',
-				'state_or_province' => $wholesale_data['state'] ?? '',
+				'state_or_province' => WC_BC_Location_Mapper::get_full_state_name($wholesale_data['state'] ?? '', $country_code),
 				'postal_code' => $wholesale_data['postcode'] ?? '',
-				'country_code' => $this->get_country_code($wholesale_data['country'] ?? ''),
+				'country_code' => $country_code,
 				'phone' => $wholesale_data['phone'] ?? '',
 				'address_type' => 'residential'
 			);
 		} elseif (!empty($billing_data['billing_address_1'])) {
+			$country_code = WC_BC_Location_Mapper::get_country_code($billing_data['billing_country'] ?? '');
 			$primary_address = array(
 				'first_name' => $billing_data['billing_first_name'] ?? '',
 				'last_name' => $billing_data['billing_last_name'] ?? '',
@@ -420,9 +420,9 @@ class WC_BC_Customer_Migrator {
 				'address1' => $billing_data['billing_address_1'],
 				'address2' => $billing_data['billing_address_2'] ?? '',
 				'city' => $billing_data['billing_city'] ?? '',
-				'state_or_province' => $billing_data['billing_state'] ?? '',
+				'state_or_province' => WC_BC_Location_Mapper::get_full_state_name($billing_data['billing_state'] ?? '', $country_code),
 				'postal_code' => $billing_data['billing_postcode'] ?? '',
-				'country_code' => $this->get_country_code($billing_data['billing_country'] ?? ''),
+				'country_code' => $country_code,
 				'phone' => $billing_data['billing_phone'] ?? '',
 				'address_type' => 'residential'
 			);
@@ -432,10 +432,11 @@ class WC_BC_Customer_Migrator {
 			$addresses[] = $primary_address;
 		}
 
-		// Shipping address (if different from billing)
+		// Handle shipping address similarly...
 		if (!empty($shipping_data['shipping_address_1']) &&
 		    $shipping_data['shipping_address_1'] !== ($billing_data['billing_address_1'] ?? '')) {
 
+			$country_code = WC_BC_Location_Mapper::get_country_code($shipping_data['shipping_country'] ?? '');
 			$shipping_address = array(
 				'first_name' => $shipping_data['shipping_first_name'] ?? '',
 				'last_name' => $shipping_data['shipping_last_name'] ?? '',
@@ -443,9 +444,9 @@ class WC_BC_Customer_Migrator {
 				'address1' => $shipping_data['shipping_address_1'],
 				'address2' => $shipping_data['shipping_address_2'] ?? '',
 				'city' => $shipping_data['shipping_city'] ?? '',
-				'state_or_province' => $shipping_data['shipping_state'] ?? '',
+				'state_or_province' => WC_BC_Location_Mapper::get_full_state_name($shipping_data['shipping_state'] ?? '', $country_code),
 				'postal_code' => $shipping_data['shipping_postcode'] ?? '',
-				'country_code' => $this->get_country_code($shipping_data['shipping_country'] ?? ''),
+				'country_code' => $country_code,
 				'address_type' => 'residential'
 			);
 
@@ -497,18 +498,11 @@ class WC_BC_Customer_Migrator {
 	/**
 	 * Convert country name to country code
 	 */
+	/**
+	 * Convert country name to country code using Location Mapper
+	 */
 	private function get_country_code($country) {
-		// Simple mapping - you can expand this
-		$country_codes = array(
-			'United States' => 'US',
-			'Canada' => 'CA',
-			'United Kingdom' => 'GB',
-			'Australia' => 'AU',
-			'South Korea' => 'KR',
-			// Add more mappings as needed
-		);
-
-		return $country_codes[$country] ?? $country;
+		return WC_BC_Location_Mapper::get_country_code($country);
 	}
 
 	/**

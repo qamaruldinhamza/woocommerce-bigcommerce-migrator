@@ -101,6 +101,9 @@ class WC_BC_Customer_Migrator {
 			return array('error' => 'User not found');
 		}
 
+		// Prepare customer data
+		$customer_data = $this->prepare_customer_data($user);
+
 		try {
 			// Check if already migrated
 			$existing_mapping = WC_BC_Customer_Database::get_customer_by_wp_id($wp_user_id);
@@ -112,14 +115,11 @@ class WC_BC_Customer_Migrator {
 				);
 			}
 
-			// Prepare customer data
-			$customer_data = $this->prepare_customer_data($user);
-
 			// Create customer in BigCommerce
 			$result = $this->bc_api->create_customer($customer_data);
 
 			if (isset($result['error'])) {
-				throw new Exception($result['error']);
+				throw new Exception($result);
 			}
 
 			// Fix: BigCommerce returns data in array format with 'data' key
@@ -152,10 +152,13 @@ class WC_BC_Customer_Migrator {
 		} catch (Exception $e) {
 			WC_BC_Customer_Database::update_customer_mapping($wp_user_id, array(
 				'migration_status' => 'error',
-				'migration_message' => $e->getMessage()
+				'migration_message' => json_encode(array(
+					'error' => $e->getMessage(),
+					'payload' => $customer_data
+				))
 			));
 
-			return array('error' => $e->getMessage());
+			return array('error' => $e->getMessage(), 'payload' => $customer_data);
 		}
 	}
 

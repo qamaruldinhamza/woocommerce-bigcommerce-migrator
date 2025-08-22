@@ -498,9 +498,11 @@ class WC_BC_Customer_Migrator {
 
 		$processed = 0;
 		$errors = 0;
+		$results = array();
 
 		foreach ($pending_customers as $customer_mapping) {
 			$result = $this->migrate_customer($customer_mapping->wp_user_id);
+			$results[$customer_mapping->wp_user_id] = $result;
 
 			if (isset($result['error'])) {
 				$errors++;
@@ -516,6 +518,7 @@ class WC_BC_Customer_Migrator {
 			'success' => true,
 			'processed' => $processed,
 			'errors' => $errors,
+			'results' => $results,
 			'remaining' => count(WC_BC_Customer_Database::get_pending_customers(1))
 		);
 	}

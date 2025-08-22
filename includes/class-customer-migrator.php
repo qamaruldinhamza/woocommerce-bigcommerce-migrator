@@ -169,6 +169,14 @@ class WC_BC_Customer_Migrator {
 			'channel_ids' => array(1) // Array of channel IDs
 		);
 
+		if (empty($customer_data['email'])) {
+			throw new Exception('Customer email is required');
+		}
+
+		if (!isset($this->customer_group_mapping[$customer_type])) {
+			throw new Exception('Invalid customer type: ' . $customer_type);
+		}
+
 		// Get wholesale/billing data
 		$wholesale_data = $this->get_wholesale_data($user->ID);
 		$billing_data = $this->get_billing_data($user->ID);

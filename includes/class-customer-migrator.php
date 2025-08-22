@@ -115,11 +115,6 @@ class WC_BC_Customer_Migrator {
 			// Prepare customer data
 			$customer_data = $this->prepare_customer_data($user);
 
-			return array(
-				'success' => true,
-				'customer_data' => $customer_data
-			);
-
 			// Create customer in BigCommerce
 			$result = $this->bc_api->create_customer($customer_data);
 
@@ -127,11 +122,19 @@ class WC_BC_Customer_Migrator {
 				throw new Exception($result['error']);
 			}
 
-			if (!isset($result['data']['id'])) {
+			// Fix: BigCommerce returns data in array format with 'data' key
+			if (!isset($result['data']) || !is_array($result['data']) || empty($result['data'])) {
+				throw new Exception('Invalid response from BigCommerce API: ' . json_encode($result));
+			}
+
+			// Get the first customer from the data array
+			$customer_response = $result['data'][0];
+
+			if (!isset($customer_response['id'])) {
 				throw new Exception('No customer ID returned from BigCommerce');
 			}
 
-			$bc_customer_id = $result['data']['id'];
+			$bc_customer_id = $customer_response['id'];
 
 			// Update mapping
 			WC_BC_Customer_Database::update_customer_mapping($wp_user_id, array(
@@ -142,7 +145,8 @@ class WC_BC_Customer_Migrator {
 
 			return array(
 				'success' => true,
-				'bc_customer_id' => $bc_customer_id
+				'bc_customer_id' => $bc_customer_id,
+				'customer_data' => $customer_response // Optional: return full customer data for debugging
 			);
 
 		} catch (Exception $e) {

@@ -54,9 +54,29 @@ class WC_BC_Customer_Database {
 
 		$data = wp_parse_args($data, $defaults);
 
-		return $wpdb->insert($table_name, $data, array(
-			'%d', '%d', '%s', '%s', '%d', '%s', '%s'
-		));
+		// Prepare the data in the correct order matching the format array
+		$insert_data = array(
+			'wp_user_id' => $data['wp_user_id'],
+			'bc_customer_id' => isset($data['bc_customer_id']) ? $data['bc_customer_id'] : null,
+			'customer_email' => $data['customer_email'],
+			'customer_type' => $data['customer_type'],
+			'bc_customer_group_id' => isset($data['bc_customer_group_id']) ? $data['bc_customer_group_id'] : null,
+			'migration_status' => $data['migration_status'],
+			'migration_message' => isset($data['migration_message']) ? $data['migration_message'] : null
+		);
+
+		// Format array must match the data order exactly
+		$format = array(
+			'%d', // wp_user_id
+			'%d', // bc_customer_id
+			'%s', // customer_email
+			'%s', // customer_type
+			'%d', // bc_customer_group_id
+			'%s', // migration_status
+			'%s'  // migration_message
+		);
+
+		return $wpdb->insert($table_name, $insert_data, $format);
 	}
 
 	public static function update_customer_mapping($wp_user_id, $data) {

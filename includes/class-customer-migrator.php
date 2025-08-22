@@ -115,11 +115,6 @@ class WC_BC_Customer_Migrator {
 			// Prepare customer data
 			$customer_data = $this->prepare_customer_data($user);
 
-			return array(
-				'success' => true,
-				'customer_data' => $customer_data
-			);
-
 			// Create customer in BigCommerce
 			$result = $this->bc_api->create_customer($customer_data);
 

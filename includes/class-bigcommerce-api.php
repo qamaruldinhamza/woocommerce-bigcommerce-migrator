@@ -237,7 +237,10 @@ class WC_BC_BigCommerce_API {
 	 */
 	public function create_customer($customer_data) {
 		$endpoint = "customers";
-		return $this->make_request($endpoint, 'POST', $customer_data);
+
+		$payload = array($customer_data);
+
+		return $this->make_request($endpoint, 'POST', $payload);
 	}
 
 	/**

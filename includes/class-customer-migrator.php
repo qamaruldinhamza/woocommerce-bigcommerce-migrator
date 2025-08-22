@@ -115,6 +115,11 @@ class WC_BC_Customer_Migrator {
 			// Prepare customer data
 			$customer_data = $this->prepare_customer_data($user);
 
+			return array(
+				'success' => true,
+				'customer_data' => $customer_data
+			);
+
 			// Create customer in BigCommerce
 			$result = $this->bc_api->create_customer($customer_data);
 
@@ -281,40 +286,53 @@ class WC_BC_Customer_Migrator {
 	private function get_wholesale_data($user_id) {
 		$wholesale_data = array();
 
-		// Get wholesale custom fields
-		if (!empty($this->wholesale_custom_fields)) {
-			foreach ($this->wholesale_custom_fields as $field) {
-				$field_key = isset($field['field_id']) ? $field['field_id'] : '';
-				if ($field_key) {
-					$value = get_user_meta($user_id, $field_key, true);
-					if (!empty($value)) {
-						$wholesale_data[$field_key] = $value;
-					}
-				}
-			}
-		}
-
-		// Map common wholesale fields
+		// Map ALL wholesale fields with correct meta keys
 		$wholesale_fields_map = array(
+			// Basic contact info
 			'phone' => 'wwlc_phone',
 			'country' => 'wwlc_country',
-			'address_1' => 'wwlc_address_1',
-			'address_line_2' => 'wwlc_address_line_2',
+			'address_1' => 'wwlc_address',
+			'address_line_2' => 'wwlc_address_2',
 			'city' => 'wwlc_city',
 			'state' => 'wwlc_state',
 			'postcode' => 'wwlc_postcode',
+
+			// Company info
 			'company_name' => 'wwlc_company_name',
-			'position_title' => 'wwlc_position_title',
-			'primary_business' => 'wwlc_primary_business',
-			'business_id_type' => 'wwlc_business_id_type',
-			'business_id_number' => 'wwlc_business_id_number',
-			'company_website' => 'wwlc_company_website'
+
+			// Custom wholesale fields (using exact keys from your data)
+			'position_title' => 'wwlc_cf_co_position_title',
+			'primary_business' => 'wwlc_cf_primary_business',
+			'business_id_type' => 'wwlc_cf_business_id_type',
+			'business_id_number' => 'wwlc_cf_business_id_num',
+			'company_website' => 'wwlc_cf_co_website',
+
+			// Basic user fields
+			'first_name' => 'first_name',
+			'last_name' => 'last_name',
 		);
 
 		foreach ($wholesale_fields_map as $key => $meta_key) {
 			$value = get_user_meta($user_id, $meta_key, true);
 			if (!empty($value)) {
 				$wholesale_data[$key] = $value;
+			}
+		}
+
+		// Also get the custom fields dynamically from the plugin configuration
+		if (!empty($this->wholesale_custom_fields)) {
+			foreach ($this->wholesale_custom_fields as $field_id => $field_config) {
+				if (isset($field_config['field_name']) && isset($field_config['enabled']) && $field_config['enabled'] === '1') {
+					$value = get_user_meta($user_id, $field_id, true);
+					if (!empty($value)) {
+						// Store with a clean key based on field name
+						$clean_key = sanitize_key($field_config['field_name']);
+						$wholesale_data[$clean_key] = $value;
+
+						// Also store the original field name for form fields
+						$wholesale_data['field_names'][$clean_key] = $field_config['field_name'];
+					}
+				}
 			}
 		}
 
@@ -438,20 +456,30 @@ class WC_BC_Customer_Migrator {
 	private function prepare_form_fields($wholesale_data) {
 		$form_fields = array();
 
-		// Map wholesale data to form fields
+		// Primary form fields mapping using exact field names
 		$field_mapping = array(
+			'Position/Title in Company' => $wholesale_data['position_title'] ?? '',
+			'Primary Business' => $wholesale_data['primary_business'] ?? '',
 			'Business ID Type' => $wholesale_data['business_id_type'] ?? '',
 			'Business ID Number' => $wholesale_data['business_id_number'] ?? '',
-			'Primary Business' => $wholesale_data['primary_business'] ?? '',
-			'Position/Title' => $wholesale_data['position_title'] ?? '',
 			'Company Website' => $wholesale_data['company_website'] ?? '',
 		);
 
+		// Add dynamic fields if they exist
+		if (isset($wholesale_data['field_names'])) {
+			foreach ($wholesale_data['field_names'] as $clean_key => $original_name) {
+				if (!empty($wholesale_data[$clean_key])) {
+					$field_mapping[$original_name] = $wholesale_data[$clean_key];
+				}
+			}
+		}
+
+		// Convert to BigCommerce format
 		foreach ($field_mapping as $field_name => $value) {
-			if (!empty($value)) {
+			if (!empty($value) && !empty($field_name)) {
 				$form_fields[] = array(
 					'name' => $field_name,
-					'value' => $value
+					'value' => (string) $value
 				);
 			}
 		}

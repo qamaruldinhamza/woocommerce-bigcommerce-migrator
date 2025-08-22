@@ -162,6 +162,11 @@ class WC_BC_Customer_Migrator {
 			'first_name' => $user->first_name ?: '',
 			'last_name' => $user->last_name ?: '',
 			'customer_group_id' => $this->customer_group_mapping[$customer_type],
+			'notes' => 'Migrated from WooCommerce. Original role: ' . implode(', ', $user->roles), // Add notes
+			'accepts_product_review_abandoned_cart_emails' => true, // Optional: enable email marketing
+			'trigger_account_created_notification' => false, // Don't send welcome email during migration
+			'origin_channel_id' => 1, // Usually 1 for main storefront
+			'channel_ids' => array(1) // Array of channel IDs
 		);
 
 		// Get wholesale/billing data
@@ -182,6 +187,11 @@ class WC_BC_Customer_Migrator {
 			$customer_data['company'] = $billing_data['billing_company'];
 		}
 
+		// Add tax exempt status for B2B customers
+		if ($this->is_tax_exempt($user)) {
+			$customer_data['tax_exempt_category'] = 'wholesale';
+		}
+
 		// Prepare addresses
 		$addresses = $this->prepare_customer_addresses($wholesale_data, $billing_data, $shipping_data);
 		if (!empty($addresses)) {
@@ -194,7 +204,57 @@ class WC_BC_Customer_Migrator {
 			$customer_data['form_fields'] = $form_fields;
 		}
 
+		// Force password reset (since we're not migrating passwords)
+		$customer_data['authentication'] = array(
+			'force_password_reset' => true
+		);
+
 		return $customer_data;
+	}
+
+	/**
+	 * Check if user is tax exempt
+	 */
+	private function is_tax_exempt($user) {
+		// Check user meta for tax exempt status
+		$tax_exempt = get_user_meta($user->ID, 'tax_exempt', true);
+
+		if ($tax_exempt === 'yes' || $tax_exempt === '1' || $tax_exempt === true) {
+			return true;
+		}
+
+		// Check for wholesale plugin tax exempt meta
+		$wholesale_tax_exempt = get_user_meta($user->ID, 'wwlc_tax_exempt', true);
+		if ($wholesale_tax_exempt === 'yes' || $wholesale_tax_exempt === '1') {
+			return true;
+		}
+
+		// Check if wholesale customer (often tax exempt by default)
+		if (in_array('wholesale_customer', $user->roles)) {
+			return true;
+		}
+
+		// Check if distributor (usually tax exempt)
+		if (in_array('distributor', $user->roles)) {
+			return true;
+		}
+
+		// Check for other common tax exempt meta keys
+		$other_tax_exempt_keys = array(
+			'billing_tax_exempt',
+			'is_tax_exempt',
+			'tax_exemption',
+			'vat_exempt'
+		);
+
+		foreach ($other_tax_exempt_keys as $key) {
+			$value = get_user_meta($user->ID, $key, true);
+			if ($value === 'yes' || $value === '1' || $value === true) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**

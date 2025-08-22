@@ -76,18 +76,46 @@ class WC_BC_Customer_Database {
 			'%s'  // migration_message
 		);
 
-		return $wpdb->insert($table_name, $insert_data, $format);
+		$result = $wpdb->insert($table_name, $insert_data, $format);
+
+		// Add error logging
+		if ($result === false) {
+			error_log("Customer mapping insert failed: " . $wpdb->last_error);
+		}
+
+		return $result;
 	}
 
 	public static function update_customer_mapping($wp_user_id, $data) {
 		global $wpdb;
 		$table_name = $wpdb->prefix . self::CUSTOMER_MIGRATION_TABLE;
 
+		// Dynamic format array based on the actual data being updated
+		$format = array();
+		foreach ($data as $key => $value) {
+			switch ($key) {
+				case 'wp_user_id':
+				case 'bc_customer_id':
+				case 'bc_customer_group_id':
+					$format[] = '%d';
+					break;
+				case 'customer_email':
+				case 'customer_type':
+				case 'migration_status':
+				case 'migration_message':
+					$format[] = '%s';
+					break;
+				default:
+					$format[] = '%s'; // Default to string
+					break;
+			}
+		}
+
 		return $wpdb->update(
 			$table_name,
 			$data,
 			array('wp_user_id' => $wp_user_id),
-			array('%d', '%s', '%d', '%s', '%s'),
+			$format,
 			array('%d')
 		);
 	}
@@ -132,4 +160,22 @@ class WC_BC_Customer_Database {
 			$limit
 		));
 	}
+
+	public static function get_remaining_customers_count() {
+		global $wpdb;
+		$table_name = $wpdb->prefix . self::CUSTOMER_MIGRATION_TABLE;
+
+		return $wpdb->get_var(
+			"SELECT COUNT(*) FROM $table_name WHERE migration_status = 'pending'"
+		);
+	}
+
+	public static function reset_customer_migration() {
+		global $wpdb;
+		$table_name = $wpdb->prefix . self::CUSTOMER_MIGRATION_TABLE;
+
+		return $wpdb->query("TRUNCATE TABLE $table_name");
+	}
+
+
 }

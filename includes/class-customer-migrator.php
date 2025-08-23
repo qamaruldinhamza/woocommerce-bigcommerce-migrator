@@ -469,7 +469,7 @@ class WC_BC_Customer_Migrator {
 			'Position/Title in Company' => $wholesale_data['position_title'] ?? '',
 			'Primary Business' => $wholesale_data['primary_business'] ?? '',
 			'Business ID Type' => $wholesale_data['business_id_type'] ?? '',
-			'Business ID Number' => $wholesale_data['business_id_number'] ?? '',
+			'Business ID Number' => $wholesale_data['business_id_number'] ?? '0',
 			'Company Website' => $wholesale_data['company_website'] ?? '',
 		);
 

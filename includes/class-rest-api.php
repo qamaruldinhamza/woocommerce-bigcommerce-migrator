@@ -148,6 +148,77 @@ class WC_BC_REST_API {
 			'permission_callback' => array($this, 'check_permission'),
 		));
 
+		register_rest_route('wc-bc-migrator/v1', '/orders/prepare', array(
+			'methods' => 'POST',
+			'callback' => array($this, 'prepare_orders'),
+			'permission_callback' => array($this, 'check_permission'),
+			'args' => array(
+				'date_from' => array(
+					'required' => false,
+					'validate_callback' => function($param) {
+						return empty($param) || strtotime($param) !== false;
+					},
+				),
+				'date_to' => array(
+					'required' => false,
+					'validate_callback' => function($param) {
+						return empty($param) || strtotime($param) !== false;
+					},
+				),
+				'status_filter' => array(
+					'required' => false,
+					'validate_callback' => function($param) {
+						return empty($param) || is_array($param);
+					},
+				),
+			),
+		));
+
+		register_rest_route('wc-bc-migrator/v1', '/orders/migrate', array(
+			'methods' => 'POST',
+			'callback' => array($this, 'migrate_orders_batch'),
+			'permission_callback' => array($this, 'check_permission'),
+			'args' => array(
+				'batch_size' => array(
+					'required' => false,
+					'default' => 10,
+					'sanitize_callback' => 'absint',
+				),
+			),
+		));
+
+		register_rest_route('wc-bc-migrator/v1', '/orders/stats', array(
+			'methods' => 'GET',
+			'callback' => array($this, 'get_order_stats'),
+			'permission_callback' => array($this, 'check_permission'),
+		));
+
+		register_rest_route('wc-bc-migrator/v1', '/orders/retry', array(
+			'methods' => 'POST',
+			'callback' => array($this, 'retry_order_errors'),
+			'permission_callback' => array($this, 'check_permission'),
+			'args' => array(
+				'batch_size' => array(
+					'required' => false,
+					'default' => 10,
+					'sanitize_callback' => 'absint',
+				),
+			),
+		));
+
+		register_rest_route('wc-bc-migrator/v1', '/orders/validate', array(
+			'methods' => 'POST',
+			'callback' => array($this, 'validate_order_dependencies'),
+			'permission_callback' => array($this, 'check_permission'),
+		));
+
+		register_rest_route('wc-bc-migrator/v1', '/orders/failed', array(
+			'methods' => 'GET',
+			'callback' => array($this, 'get_failed_orders'),
+			'permission_callback' => array($this, 'check_permission'),
+		));
+
+
 	}
 
 	public function check_permission() {
@@ -397,4 +468,152 @@ class WC_BC_REST_API {
 		}
 	}
 
+	// Complete callback methods:
+
+	/**
+	 * Prepare orders for migration
+	 */
+	public function prepare_orders($request) {
+		try {
+			$date_from = $request->get_param('date_from');
+			$date_to = $request->get_param('date_to');
+			$status_filter = $request->get_param('status_filter');
+
+			$processor = new WC_BC_Order_Processor();
+			$result = $processor->prepare_orders($date_from, $date_to, $status_filter);
+
+			return new WP_REST_Response($result, 200);
+		} catch (Exception $e) {
+			return new WP_REST_Response(array(
+				'success' => false,
+				'message' => $e->getMessage()
+			), 500);
+		}
+	}
+
+	/**
+	 * Migrate orders batch
+	 */
+	public function migrate_orders_batch($request) {
+		$batch_size = $request->get_param('batch_size') ?: 10;
+
+		try {
+			$processor = new WC_BC_Order_Processor();
+			$result = $processor->process_batch($batch_size);
+			return new WP_REST_Response($result, 200);
+		} catch (Exception $e) {
+			return new WP_REST_Response(array(
+				'success' => false,
+				'message' => $e->getMessage()
+			), 500);
+		}
+	}
+
+	/**
+	 * Get order migration statistics
+	 */
+	public function get_order_stats() {
+		try {
+			$processor = new WC_BC_Order_Processor();
+			$stats = $processor->get_migration_stats();
+
+			$formatted_stats = array(
+				'total' => (int) ($stats['total'] ?? 0),
+				'pending' => 0,
+				'success' => 0,
+				'error' => 0,
+				'skipped' => 0,
+				'total_value' => (float) ($stats['total_value'] ?? 0),
+				'average_value' => (float) ($stats['average_value'] ?? 0)
+			);
+
+			// Get status breakdown from database
+			$status_stats = WC_BC_Order_Database::get_order_migration_stats();
+
+			if (isset($status_stats['status_breakdown'])) {
+				foreach ($status_stats['status_breakdown'] as $stat) {
+					$formatted_stats[$stat->status] = (int) $stat->count;
+				}
+			}
+
+			return new WP_REST_Response(array(
+				'success' => true,
+				'stats' => $formatted_stats
+			), 200);
+		} catch (Exception $e) {
+			return new WP_REST_Response(array(
+				'success' => false,
+				'message' => $e->getMessage()
+			), 500);
+		}
+	}
+
+	/**
+	 * Retry failed order migrations
+	 */
+	public function retry_order_errors($request) {
+		$batch_size = $request->get_param('batch_size') ?: 10;
+
+		try {
+			$processor = new WC_BC_Order_Processor();
+			$result = $processor->retry_failed_orders($batch_size);
+			return new WP_REST_Response($result, 200);
+		} catch (Exception $e) {
+			return new WP_REST_Response(array(
+				'success' => false,
+				'message' => $e->getMessage()
+			), 500);
+		}
+	}
+
+	/**
+	 * Validate order dependencies before migration
+	 */
+	public function validate_order_dependencies() {
+		try {
+			$validator = new WC_BC_Order_Validator();
+			$result = $validator->validate_dependencies();
+			return new WP_REST_Response($result, 200);
+		} catch (Exception $e) {
+			return new WP_REST_Response(array(
+				'success' => false,
+				'message' => $e->getMessage()
+			), 500);
+		}
+	}
+
+	/**
+	 * Get failed order migrations for debugging
+	 */
+	public function get_failed_orders() {
+		try {
+			$failed_orders = WC_BC_Order_Database::get_error_orders(50);
+
+			// Enhance with additional data
+			$enhanced_orders = array();
+			foreach ($failed_orders as $order) {
+				$wc_order = wc_get_order($order->wc_order_id);
+				$enhanced_orders[] = array(
+					'wc_order_id' => $order->wc_order_id,
+					'order_status' => $order->order_status,
+					'order_total' => $order->order_total,
+					'order_date' => $order->order_date,
+					'payment_method' => $order->payment_method,
+					'migration_message' => $order->migration_message,
+					'customer_name' => $wc_order ? $wc_order->get_billing_first_name() . ' ' . $wc_order->get_billing_last_name() : 'Unknown',
+					'updated_at' => $order->updated_at
+				);
+			}
+
+			return new WP_REST_Response(array(
+				'success' => true,
+				'failed_orders' => $enhanced_orders
+			), 200);
+		} catch (Exception $e) {
+			return new WP_REST_Response(array(
+				'success' => false,
+				'message' => $e->getMessage()
+			), 500);
+		}
+	}
 }

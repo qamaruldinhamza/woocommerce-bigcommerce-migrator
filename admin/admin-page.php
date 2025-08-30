@@ -25,6 +25,8 @@ $client_secret = get_option('wc_bc_client_secret', '');
 			<div class="tabs">
 				<div class="tab active" data-tab="migration"><?php _e('Migration', 'wc-bc-migrator'); ?></div>
                 <div class="tab" data-tab="verification"><?php _e('Verification', 'wc-bc-migrator'); ?></div>
+                <div class="tab" data-tab="orders"><?php _e('Order Migration', 'wc-bc-migrator'); ?></div>
+
                 <div class="tab" data-tab="customers"><?php _e('Customer Migration', 'wc-bc-migrator'); ?></div>
                 <div class="tab" data-tab="settings"><?php _e('Settings', 'wc-bc-migrator'); ?></div>
 				<div class="tab" data-tab="mapping"><?php _e('Category Mapping', 'wc-bc-migrator'); ?></div>
@@ -199,6 +201,122 @@ $client_secret = get_option('wc_bc_client_secret', '');
                 <div class="log-container" id="verification-live-log" style="display: none;">
                     <h3><?php _e('Verification Progress', 'wc-bc-migrator'); ?></h3>
                     <div id="verification-log-entries"></div>
+                </div>
+            </div>
+
+            <!-- Order Migration Tab -->
+            <div class="tab-content" id="orders-tab">
+                <!-- Order Migration Statistics -->
+                <div class="wc-bc-stats" id="order-stats">
+                    <div class="stat-card">
+                        <h3><?php _e('Total Orders', 'wc-bc-migrator'); ?></h3>
+                        <div class="number" id="order-stat-total">0</div>
+                    </div>
+                    <div class="stat-card pending">
+                        <h3><?php _e('Pending', 'wc-bc-migrator'); ?></h3>
+                        <div class="number" id="order-stat-pending">0</div>
+                    </div>
+                    <div class="stat-card success">
+                        <h3><?php _e('Migrated', 'wc-bc-migrator'); ?></h3>
+                        <div class="number" id="order-stat-success">0</div>
+                    </div>
+                    <div class="stat-card error">
+                        <h3><?php _e('Failed', 'wc-bc-migrator'); ?></h3>
+                        <div class="number" id="order-stat-error">0</div>
+                    </div>
+                </div>
+
+                <!-- Order Migration Actions -->
+                <div class="wc-bc-actions">
+                    <div class="action-group">
+                        <h3><?php _e('Prerequisites Check', 'wc-bc-migrator'); ?></h3>
+                        <p><?php _e('Validate that products and customers are migrated before starting order migration.', 'wc-bc-migrator'); ?></p>
+                        <button class="button" id="validate-order-dependencies">
+                            <?php _e('Check Migration Dependencies', 'wc-bc-migrator'); ?>
+                        </button>
+                        <div id="dependency-results" class="dependency-results" style="display: none;"></div>
+                    </div>
+
+                    <div class="action-group">
+                        <h3><?php _e('Initialize Order Migration', 'wc-bc-migrator'); ?></h3>
+                        <p><?php _e('Prepare WooCommerce orders for migration. You can filter by date range and order status.', 'wc-bc-migrator'); ?></p>
+
+                        <div class="form-inline">
+                            <label><?php _e('Date From:', 'wc-bc-migrator'); ?>
+                                <input type="date" id="order-date-from" class="date-input">
+                            </label>
+                            <label><?php _e('Date To:', 'wc-bc-migrator'); ?>
+                                <input type="date" id="order-date-to" class="date-input">
+                            </label>
+                        </div>
+
+                        <button class="button" id="prepare-orders">
+                            <?php _e('Prepare Orders for Migration', 'wc-bc-migrator'); ?>
+                        </button>
+                        <button class="button button-danger" id="reset-order-migration" style="display: none;">
+                            <?php _e('Reset Order Migration Data', 'wc-bc-migrator'); ?>
+                        </button>
+                    </div>
+
+                    <div class="action-group">
+                        <h3><?php _e('Batch Order Migration', 'wc-bc-migrator'); ?></h3>
+                        <p><?php _e('Migrate orders in batches. Orders will preserve all data including products, customers, payments, and totals.', 'wc-bc-migrator'); ?></p>
+                        <label><?php _e('Batch Size:', 'wc-bc-migrator'); ?>
+                            <input type="number" class="batch-size-input" id="order-batch-size" value="5" min="1" max="20">
+                        </label>
+                        <button class="button" id="start-order-batch">
+                            <?php _e('Start Order Migration', 'wc-bc-migrator'); ?>
+                        </button>
+                        <button class="button button-secondary" id="stop-order-batch" disabled>
+                            <?php _e('Stop Migration', 'wc-bc-migrator'); ?>
+                        </button>
+
+                        <div class="progress-bar" id="order-progress-bar">
+                            <div class="progress-fill" id="order-progress-fill">0%</div>
+                        </div>
+                    </div>
+
+                    <div class="action-group">
+                        <h3><?php _e('Error Handling', 'wc-bc-migrator'); ?></h3>
+                        <p><?php _e('Retry migration for orders that failed during the initial process.', 'wc-bc-migrator'); ?></p>
+                        <button class="button button-secondary" id="retry-order-errors">
+                            <?php _e('Retry Failed Orders', 'wc-bc-migrator'); ?>
+                        </button>
+                        <button class="button button-secondary" id="view-failed-orders">
+                            <?php _e('View Failed Orders', 'wc-bc-migrator'); ?>
+                        </button>
+                        <button class="button button-secondary" id="export-order-errors">
+                            <?php _e('Export Order Error Report', 'wc-bc-migrator'); ?>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Failed Orders Table -->
+                <div class="failed-orders-container" id="failed-orders-container" style="display: none;">
+                    <h3><?php _e('Failed Order Migrations', 'wc-bc-migrator'); ?></h3>
+                    <div class="table-container">
+                        <table class="wp-list-table widefat fixed striped">
+                            <thead>
+                            <tr>
+                                <th><?php _e('WC Order ID', 'wc-bc-migrator'); ?></th>
+                                <th><?php _e('Customer', 'wc-bc-migrator'); ?></th>
+                                <th><?php _e('Order Total', 'wc-bc-migrator'); ?></th>
+                                <th><?php _e('Order Date', 'wc-bc-migrator'); ?></th>
+                                <th><?php _e('Payment Method', 'wc-bc-migrator'); ?></th>
+                                <th><?php _e('Error Message', 'wc-bc-migrator'); ?></th>
+                            </tr>
+                            </thead>
+                            <tbody id="failed-orders-tbody">
+                            <!-- Failed orders will be populated here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Order Migration Log -->
+                <div class="log-container" id="order-live-log" style="display: none;">
+                    <h3><?php _e('Order Migration Progress', 'wc-bc-migrator'); ?></h3>
+                    <div id="order-log-entries"></div>
                 </div>
             </div>
 

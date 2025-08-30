@@ -72,6 +72,18 @@
             $('#reset-customer-migration').on('click', this.resetCustomerMigration.bind(this));
             $('#export-customer-errors').on('click', this.exportCustomerErrors.bind(this));
 
+
+
+            $('#validate-order-dependencies').on('click', this.validateOrderDependencies.bind(this));
+            $('#prepare-orders').on('click', this.prepareOrders.bind(this));
+            $('#start-order-batch').on('click', this.startOrderMigration.bind(this));
+            $('#stop-order-batch').on('click', this.stopOrderMigration.bind(this));
+            $('#retry-order-errors').on('click', this.retryOrderErrors.bind(this));
+            $('#view-failed-orders').on('click', this.viewFailedOrders.bind(this));
+            $('#export-order-errors').on('click', this.exportOrderErrors.bind(this));
+            $('#reset-order-migration').on('click', this.resetOrderMigration.bind(this));
+
+
         },
 
         checkMigrationStatus: function() {
@@ -1078,6 +1090,354 @@
         });
     };
 
+    WCBCMigrator.isOrderMigrationRunning = false;
+    WCBCMigrator.shouldStopOrders = false;
+
+
+    // Order Migration Functions
+    WCBCMigrator.loadOrderStats = function() {
+        $.ajax({
+            url: wcBcMigrator.apiUrl + 'orders/stats',
+            method: 'GET',
+            beforeSend: function(xhr) {
+                xhr.setRequestHeader('X-WP-Nonce', wcBcMigrator.nonce);
+            },
+            success: function(response) {
+                if (response.success && response.stats) {
+                    $('#order-stat-total').text(response.stats.total || 0);
+                    $('#order-stat-pending').text(response.stats.pending || 0);
+                    $('#order-stat-success').text(response.stats.success || 0);
+                    $('#order-stat-error').text(response.stats.error || 0);
+
+                    // Show reset button if there's data
+                    if (response.stats.total > 0) {
+                        $('#reset-order-migration').show();
+                    }
+                }
+            },
+            error: function() {
+                console.log('Failed to load order stats');
+            }
+        });
+    };
+
+    WCBCMigrator.validateOrderDependencies = function(e) {
+        e.preventDefault();
+        var button = $(e.target);
+        button.prop('disabled', true).text('Validating...');
+
+        $.ajax({
+            url: wcBcMigrator.apiUrl + 'orders/validate',
+            method: 'POST',
+            beforeSend: function(xhr) {
+                xhr.setRequestHeader('X-WP-Nonce', wcBcMigrator.nonce);
+            },
+            success: function(response) {
+                WCBCMigrator.displayDependencyResults(response);
+            },
+            error: function() {
+                WCBCMigrator.addOrderLog('error', 'Failed to validate dependencies');
+            },
+            complete: function() {
+                button.prop('disabled', false).text('Check Migration Dependencies');
+            }
+        });
+    };
+
+    WCBCMigrator.displayDependencyResults = function(results) {
+        var container = $('#dependency-results');
+        var html = '<div class="dependency-validation">';
+
+        if (results.ready_to_migrate) {
+            html += '<div class="notice notice-success"><p><strong>✓ Ready to migrate orders!</strong></p></div>';
+        } else {
+            html += '<div class="notice notice-warning"><p><strong>⚠ Issues found:</strong></p></div>';
+        }
+
+        // Show individual checks
+        if (results.checks) {
+            html += '<ul class="dependency-checks">';
+            Object.keys(results.checks).forEach(function(key) {
+                var check = results.checks[key];
+                var icon = check.status ? '✓' : '✗';
+                var className = check.status ? 'success' : 'error';
+                html += '<li class="' + className + '">' + icon + ' ' + check.name + ': ' + check.message + '</li>';
+            });
+            html += '</ul>';
+        }
+
+        // Show errors and warnings
+        if (results.errors && results.errors.length > 0) {
+            html += '<div class="validation-errors"><strong>Errors:</strong><ul>';
+            results.errors.forEach(function(error) {
+                html += '<li>' + error + '</li>';
+            });
+            html += '</ul></div>';
+        }
+
+        if (results.warnings && results.warnings.length > 0) {
+            html += '<div class="validation-warnings"><strong>Warnings:</strong><ul>';
+            results.warnings.forEach(function(warning) {
+                html += '<li>' + warning + '</li>';
+            });
+            html += '</ul></div>';
+        }
+
+        html += '</div>';
+        container.html(html).show();
+    };
+
+    WCBCMigrator.prepareOrders = function(e) {
+        e.preventDefault();
+        var button = $(e.target);
+        button.prop('disabled', true).text('Preparing...');
+
+        this.showLoadingOverlay('Preparing orders for migration...');
+
+        var dateFrom = $('#order-date-from').val();
+        var dateTo = $('#order-date-to').val();
+
+        $.ajax({
+            url: wcBcMigrator.apiUrl + 'orders/prepare',
+            method: 'POST',
+            data: {
+                date_from: dateFrom,
+                date_to: dateTo
+            },
+            beforeSend: function(xhr) {
+                xhr.setRequestHeader('X-WP-Nonce', wcBcMigrator.nonce);
+            },
+            success: function(response) {
+                if (response.success) {
+                    WCBCMigrator.addOrderLog('success', 'Prepared ' + response.inserted + ' orders for migration');
+                    if (response.skipped > 0) {
+                        WCBCMigrator.addOrderLog('warning', 'Skipped ' + response.skipped + ' orders (already prepared)');
+                    }
+                    if (response.errors > 0) {
+                        WCBCMigrator.addOrderLog('error', response.errors + ' orders had errors');
+                    }
+                    WCBCMigrator.loadOrderStats();
+                } else {
+                    WCBCMigrator.addOrderLog('error', 'Error: ' + response.message);
+                }
+            },
+            error: function() {
+                WCBCMigrator.addOrderLog('error', 'Failed to prepare orders');
+            },
+            complete: function() {
+                button.prop('disabled', false).text('Prepare Orders for Migration');
+                WCBCMigrator.hideLoadingOverlay();
+            }
+        });
+    };
+
+    WCBCMigrator.startOrderMigration = function(e) {
+        e.preventDefault();
+        if (this.isOrderMigrationRunning) return;
+
+        this.isOrderMigrationRunning = true;
+        this.shouldStopOrders = false;
+
+        $('#start-order-batch').prop('disabled', true);
+        $('#stop-order-batch').prop('disabled', false);
+        $('#order-progress-bar').show();
+        $('#order-live-log').show();
+
+        this.addOrderLog('info', 'Starting order migration...');
+        this.processOrderBatch();
+    };
+
+    WCBCMigrator.processOrderBatch = function() {
+        if (this.shouldStopOrders) {
+            this.finishOrderMigration();
+            return;
+        }
+
+        var batchSize = $('#order-batch-size').val() || 5;
+
+        $.ajax({
+            url: wcBcMigrator.apiUrl + 'orders/migrate',
+            method: 'POST',
+            data: { batch_size: batchSize },
+            beforeSend: function(xhr) {
+                xhr.setRequestHeader('X-WP-Nonce', wcBcMigrator.nonce);
+            },
+            success: function(response) {
+                if (response.success) {
+                    if (response.processed > 0) {
+                        WCBCMigrator.addOrderLog('success', 'Processed ' + response.processed + ' orders');
+                    }
+
+                    if (response.errors > 0) {
+                        WCBCMigrator.addOrderLog('error', response.errors + ' orders failed');
+                    }
+
+                    WCBCMigrator.loadOrderStats();
+                    WCBCMigrator.updateOrderProgress();
+
+                    if (response.remaining > 0 && !WCBCMigrator.shouldStopOrders) {
+                        setTimeout(function() {
+                            WCBCMigrator.processOrderBatch();
+                        }, 2000); // 2 second delay between batches (orders are more complex)
+                    } else {
+                        WCBCMigrator.finishOrderMigration();
+                    }
+                } else {
+                    WCBCMigrator.addOrderLog('error', 'Error: ' + response.message);
+                    WCBCMigrator.finishOrderMigration();
+                }
+            },
+            error: function() {
+                WCBCMigrator.addOrderLog('error', 'Order batch processing failed');
+                WCBCMigrator.finishOrderMigration();
+            }
+        });
+    };
+
+    WCBCMigrator.stopOrderMigration = function(e) {
+        e.preventDefault();
+        this.shouldStopOrders = true;
+        $('#stop-order-batch').prop('disabled', true).text('Stopping...');
+    };
+
+    WCBCMigrator.finishOrderMigration = function() {
+        this.isOrderMigrationRunning = false;
+        this.shouldStopOrders = false;
+
+        $('#start-order-batch').prop('disabled', false);
+        $('#stop-order-batch').prop('disabled', true).text('Stop Migration');
+
+        this.addOrderLog('info', 'Order migration process completed');
+        this.loadOrderStats();
+    };
+
+    WCBCMigrator.updateOrderProgress = function() {
+        $.ajax({
+            url: wcBcMigrator.apiUrl + 'orders/stats',
+            method: 'GET',
+            beforeSend: function(xhr) {
+                xhr.setRequestHeader('X-WP-Nonce', wcBcMigrator.nonce);
+            },
+            success: function(response) {
+                if (response.success && response.stats) {
+                    var total = response.stats.total || 0;
+                    var completed = (response.stats.success || 0) + (response.stats.error || 0);
+                    var percentage = total > 0 ? Math.round((completed / total) * 100) : 0;
+
+                    $('#order-progress-fill').css('width', percentage + '%').text(percentage + '%');
+                }
+            }
+        });
+    };
+
+    WCBCMigrator.addOrderLog = function(type, message) {
+        var timestamp = new Date().toLocaleTimeString();
+        var logEntry = $('<div class="log-entry ' + type + '">[' + timestamp + '] ' + message + '</div>');
+        $('#order-log-entries').prepend(logEntry);
+
+        // Keep only last 50 entries
+        $('#order-log-entries .log-entry').slice(50).remove();
+
+        // Also add to main activity logs
+        this.saveActivityLog(type, '[ORDERS] ' + message);
+    };
+
+    WCBCMigrator.retryOrderErrors = function(e) {
+        e.preventDefault();
+        var button = $(e.target);
+        var batchSize = $('#order-batch-size').val() || 5;
+
+        button.prop('disabled', true).text('Retrying...');
+
+        $.ajax({
+            url: wcBcMigrator.apiUrl + 'orders/retry',
+            method: 'POST',
+            data: { batch_size: batchSize },
+            beforeSend: function(xhr) {
+                xhr.setRequestHeader('X-WP-Nonce', wcBcMigrator.nonce);
+            },
+            success: function(response) {
+                if (response.success) {
+                    WCBCMigrator.addOrderLog('success', 'Retried ' + response.processed + ' failed orders');
+                    WCBCMigrator.loadOrderStats();
+                } else {
+                    WCBCMigrator.addOrderLog('error', 'Error retrying orders: ' + response.message);
+                }
+            },
+            error: function() {
+                WCBCMigrator.addOrderLog('error', 'Failed to retry order errors');
+            },
+            complete: function() {
+                button.prop('disabled', false).text('Retry Failed Orders');
+            }
+        });
+    };
+
+    WCBCMigrator.viewFailedOrders = function(e) {
+        e.preventDefault();
+        var button = $(e.target);
+        button.prop('disabled', true).text('Loading...');
+
+        $.ajax({
+            url: wcBcMigrator.apiUrl + 'orders/failed',
+            method: 'GET',
+            beforeSend: function(xhr) {
+                xhr.setRequestHeader('X-WP-Nonce', wcBcMigrator.nonce);
+            },
+            success: function(response) {
+                if (response.success) {
+                    WCBCMigrator.displayFailedOrders(response.failed_orders);
+                    $('#failed-orders-container').show();
+                } else {
+                    WCBCMigrator.addOrderLog('error', 'Error loading failed orders: ' + response.message);
+                }
+            },
+            error: function() {
+                WCBCMigrator.addOrderLog('error', 'Failed to load failed orders');
+            },
+            complete: function() {
+                button.prop('disabled', false).text('View Failed Orders');
+            }
+        });
+    };
+
+    WCBCMigrator.displayFailedOrders = function(failedOrders) {
+        var tbody = $('#failed-orders-tbody');
+        tbody.empty();
+
+        if (failedOrders.length === 0) {
+            tbody.append('<tr><td colspan="6">No failed orders found.</td></tr>');
+            return;
+        }
+
+        failedOrders.forEach(function(order) {
+            var row = '<tr>' +
+                '<td>' + order.wc_order_id + '</td>' +
+                '<td>' + (order.customer_name || 'Guest') + '</td>' +
+                '<td>$' + parseFloat(order.order_total).toFixed(2) + '</td>' +
+                '<td>' + order.order_date + '</td>' +
+                '<td>' + (order.payment_method || 'N/A') + '</td>' +
+                '<td>' + (order.migration_message || 'Unknown error') + '</td>' +
+                '</tr>';
+            tbody.append(row);
+        });
+    };
+
+    WCBCMigrator.exportOrderErrors = function(e) {
+        e.preventDefault();
+        // TODO: Implement order error export
+        WCBCMigrator.addOrderLog('info', 'Export order errors functionality coming soon');
+    };
+
+    WCBCMigrator.resetOrderMigration = function(e) {
+        e.preventDefault();
+        if (!confirm('Are you sure you want to reset all order migration data? This action cannot be undone.')) {
+            return;
+        }
+
+        // TODO: Add API endpoint for resetting order migration
+        WCBCMigrator.addOrderLog('info', 'Order migration reset functionality coming soon');
+    };
 
     $('.tab').on('click', function() {
         var tabId = $(this).data('tab');
@@ -1086,10 +1446,14 @@
         $('.tab-content').removeClass('active');
         $('#' + tabId + '-tab').addClass('active');
 
-        // Load verification stats when verification tab is activated
-        if (tabId === 'verification') {
+        if (tabId === 'customers') {
+            WCBCMigrator.loadCustomerStats();
+        } else if (tabId === 'verification') {
             WCBCMigrator.loadVerificationStats();
+        } else if (tabId === 'orders') {
+            WCBCMigrator.loadOrderStats();
         }
     });
+
 
 })(jQuery);

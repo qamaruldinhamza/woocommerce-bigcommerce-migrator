@@ -266,4 +266,158 @@ class WC_BC_BigCommerce_API {
 		$endpoint = "customers/{$customer_id}";
 		return $this->make_request($endpoint, 'PUT', $customer_data);
 	}
+
+	/**
+	 * Create an order in BigCommerce
+	 */
+	public function create_order($order_data) {
+		$endpoint = 'orders';
+		return $this->make_request($endpoint, 'POST', $order_data);
+	}
+
+	/**
+	 * Get a specific order from BigCommerce
+	 */
+	public function get_order($order_id) {
+		$endpoint = "orders/{$order_id}";
+		return $this->make_request($endpoint, 'GET');
+	}
+
+	/**
+	 * Update an order in BigCommerce
+	 */
+	public function update_order($order_id, $order_data) {
+		$endpoint = "orders/{$order_id}";
+		return $this->make_request($endpoint, 'PUT', $order_data);
+	}
+
+	/**
+	 * Get orders from BigCommerce with pagination
+	 */
+	public function get_orders($page = 1, $limit = 250, $filters = array()) {
+		$params = array_merge(array(
+			'page' => $page,
+			'limit' => min($limit, 250),
+		), $filters);
+
+		$endpoint = 'orders?' . http_build_query($params);
+		return $this->make_request($endpoint, 'GET');
+	}
+
+	/**
+	 * Create order shipping addresses
+	 */
+	public function create_order_shipping_address($order_id, $address_data) {
+		$endpoint = "orders/{$order_id}/shipping_addresses";
+		return $this->make_request($endpoint, 'POST', $address_data);
+	}
+
+	/**
+	 * Get order products/line items
+	 */
+	public function get_order_products($order_id) {
+		$endpoint = "orders/{$order_id}/products";
+		return $this->make_request($endpoint, 'GET');
+	}
+
+	/**
+	 * Create order products/line items
+	 */
+	public function create_order_product($order_id, $product_data) {
+		$endpoint = "orders/{$order_id}/products";
+		return $this->make_request($endpoint, 'POST', $product_data);
+	}
+
+	/**
+	 * Get order taxes
+	 */
+	public function get_order_taxes($order_id) {
+		$endpoint = "orders/{$order_id}/taxes";
+		return $this->make_request($endpoint, 'GET');
+	}
+
+	/**
+	 * Create order tax
+	 */
+	public function create_order_tax($order_id, $tax_data) {
+		$endpoint = "orders/{$order_id}/taxes";
+		return $this->make_request($endpoint, 'POST', $tax_data);
+	}
+
+	/**
+	 * Get order coupons
+	 */
+	public function get_order_coupons($order_id) {
+		$endpoint = "orders/{$order_id}/coupons";
+		return $this->make_request($endpoint, 'GET');
+	}
+
+	/**
+	 * Create order coupon
+	 */
+	public function create_order_coupon($order_id, $coupon_data) {
+		$endpoint = "orders/{$order_id}/coupons";
+		return $this->make_request($endpoint, 'POST', $coupon_data);
+	}
+
+	/**
+	 * Get order transactions (read-only in most cases)
+	 */
+	public function get_order_transactions($order_id) {
+		$endpoint = "orders/{$order_id}/transactions";
+		return $this->make_request($endpoint, 'GET');
+	}
+
+	/**
+	 * Get order shipping quotes (for reference)
+	 */
+	public function get_order_shipping_quotes($order_id, $address_id) {
+		$endpoint = "orders/{$order_id}/shipping_addresses/{$address_id}/shipping_quotes";
+		return $this->make_request($endpoint, 'GET');
+	}
+
+	/**
+	 * Search orders by various criteria
+	 */
+	public function search_orders($criteria) {
+		$allowed_filters = array(
+			'min_id', 'max_id', 'min_total', 'max_total',
+			'customer_id', 'email', 'status_id', 'cart_id',
+			'payment_method', 'min_date_created', 'max_date_created',
+			'min_date_modified', 'max_date_modified', 'sort'
+		);
+
+		$filters = array_intersect_key($criteria, array_flip($allowed_filters));
+
+		return $this->get_orders(1, 250, $filters);
+	}
+
+	/**
+	 * Get order statuses from BigCommerce
+	 */
+	public function get_order_statuses() {
+		$endpoint = 'order_statuses';
+		return $this->make_request($endpoint, 'GET');
+	}
+
+	/**
+	 * Verify order exists in BigCommerce
+	 */
+	public function verify_order_exists($order_id) {
+		$response = $this->get_order($order_id);
+		return isset($response['data']['id']) && $response['data']['id'] == $order_id;
+	}
+
+	/**
+	 * Get order count for pagination planning
+	 */
+	public function get_order_count($filters = array()) {
+		$response = $this->get_orders(1, 1, $filters);
+
+		if (isset($response['meta']['pagination']['total'])) {
+			return $response['meta']['pagination']['total'];
+		}
+
+		return 0;
+	}
 }

@@ -1,0 +1,616 @@
+<?php
+/**
+ * Order Migration Processor
+ * Handles the preparation and batch processing of WooCommerce orders for migration
+ */
+class WC_BC_Order_Processor {
+
+	private $bc_api;
+	private $status_mapper;
+
+	public function __construct() {
+		$this->bc_api = new WC_BC_BigCommerce_API();
+		$this->status_mapper = new WC_BC_Order_Status_Mapper();
+	}
+
+	/**
+	 * Prepare all WooCommerce orders for migration
+	 */
+	public function prepare_orders($date_from = null, $date_to = null, $status_filter = null) {
+		// Ensure order migration table exists
+		if (!WC_BC_Order_Database::create_table()) {
+			return array(
+				'success' => false,
+				'message' => 'Failed to create order migration table'
+			);
+		}
+
+		$args = array(
+			'type' => 'shop_order',
+			'status' => 'any',
+			'limit' => -1,
+			'return' => 'ids',
+			'meta_query' => array()
+		);
+
+		// Add date filters if provided
+		if ($date_from) {
+			$args['date_created'] = '>=' . $date_from;
+		}
+		if ($date_to) {
+			$args['date_created'] = '<=' . $date_to;
+		}
+
+		// Add status filter if provided
+		if ($status_filter && is_array($status_filter)) {
+			$args['status'] = $status_filter;
+		}
+
+		$order_ids = wc_get_orders($args);
+
+		$inserted = 0;
+		$skipped = 0;
+		$errors = 0;
+
+		foreach ($order_ids as $order_id) {
+			// Check if already exists
+			$existing = WC_BC_Order_Database::get_order_by_wc_id($order_id);
+			if ($existing) {
+				$skipped++;
+				continue;
+			}
+
+			$order = wc_get_order($order_id);
+			if (!$order) {
+				$errors++;
+				continue;
+			}
+
+			// Prepare order data for database
+			$order_data = $this->extract_order_basic_data($order);
+
+			$result = WC_BC_Order_Database::insert_order_mapping($order_data);
+
+			if ($result) {
+				$inserted++;
+			} else {
+				$errors++;
+				error_log("Failed to prepare order {$order_id} for migration");
+			}
+		}
+
+		return array(
+			'success' => true,
+			'total_found' => count($order_ids),
+			'inserted' => $inserted,
+			'skipped' => $skipped,
+			'errors' => $errors
+		);
+	}
+
+	/**
+	 * Extract basic order data for database storage
+	 */
+	private function extract_order_basic_data($order) {
+		$customer_id = $order->get_customer_id();
+
+		// Get BigCommerce customer ID if customer exists
+		$bc_customer_id = null;
+		if ($customer_id) {
+			$customer_mapping = WC_BC_Customer_Database::get_customer_by_wp_id($customer_id);
+			if ($customer_mapping && $customer_mapping->bc_customer_id) {
+				$bc_customer_id = $customer_mapping->bc_customer_id;
+			}
+		}
+
+		return array(
+			'wc_order_id' => $order->get_id(),
+			'wc_customer_id' => $customer_id ?: null,
+			'bc_customer_id' => $bc_customer_id,
+			'order_status' => $order->get_status(),
+			'order_total' => $order->get_total(),
+			'order_date' => $order->get_date_created()->format('Y-m-d H:i:s'),
+			'payment_method' => $order->get_payment_method(),
+			'payment_method_title' => $order->get_payment_method_title(),
+			'migration_status' => 'pending'
+		);
+	}
+
+	/**
+	 * Process a batch of orders for migration
+	 */
+	public function process_batch($batch_size = 10) {
+		// Get ready orders (those with available dependencies)
+		$pending_orders = WC_BC_Order_Database::get_ready_orders($batch_size);
+
+		if (empty($pending_orders)) {
+			return array(
+				'success' => true,
+				'message' => 'No ready orders to migrate',
+				'processed' => 0,
+				'errors' => 0
+			);
+		}
+
+		$processed = 0;
+		$errors = 0;
+		$results = array();
+
+		foreach ($pending_orders as $order_mapping) {
+			// Check if order's products are all migrated
+			if (!WC_BC_Order_Database::check_order_products_migrated($order_mapping->wc_order_id)) {
+				// Mark as skipped for now
+				WC_BC_Order_Database::update_order_mapping($order_mapping->wc_order_id, array(
+					'migration_status' => 'skipped',
+					'migration_message' => 'Waiting for all order products to be migrated'
+				));
+				continue;
+			}
+
+			$result = $this->migrate_single_order($order_mapping->wc_order_id);
+			$results[$order_mapping->wc_order_id] = $result;
+
+			if (isset($result['error'])) {
+				$errors++;
+			} else {
+				$processed++;
+			}
+
+			// Add delay to respect API rate limits
+			usleep(500000); // 0.5 seconds
+		}
+
+		return array(
+			'success' => true,
+			'processed' => $processed,
+			'errors' => $errors,
+			'results' => $results,
+			'remaining' => WC_BC_Order_Database::get_remaining_orders_count()
+		);
+	}
+
+	/**
+	 * Migrate a single order to BigCommerce
+	 */
+	public function migrate_single_order($wc_order_id) {
+		$wc_order = wc_get_order($wc_order_id);
+		if (!$wc_order) {
+			return array('error' => 'WooCommerce order not found');
+		}
+
+		try {
+			// Check if already migrated
+			$existing_mapping = WC_BC_Order_Database::get_order_by_wc_id($wc_order_id);
+			if ($existing_mapping && $existing_mapping->bc_order_id) {
+				return array(
+					'success' => true,
+					'bc_order_id' => $existing_mapping->bc_order_id,
+					'already_exists' => true
+				);
+			}
+
+			// Prepare order data for BigCommerce
+			$order_data = $this->prepare_order_data($wc_order);
+
+			// Create order in BigCommerce
+			$result = $this->bc_api->create_order($order_data);
+
+			if (isset($result['error'])) {
+				throw new Exception(json_encode($result));
+			}
+
+			if (!isset($result['data']['id'])) {
+				throw new Exception('No order ID returned from BigCommerce: ' . json_encode($result));
+			}
+
+			$bc_order_id = $result['data']['id'];
+
+			// Update mapping
+			WC_BC_Order_Database::update_order_mapping($wc_order_id, array(
+				'bc_order_id' => $bc_order_id,
+				'migration_status' => 'success',
+				'migration_message' => 'Order migrated successfully'
+			));
+
+			return array(
+				'success' => true,
+				'bc_order_id' => $bc_order_id
+			);
+
+		} catch (Exception $e) {
+			$error_message = $e->getMessage();
+			error_log("Order migration error for order {$wc_order_id}: {$error_message}");
+
+			WC_BC_Order_Database::update_order_mapping($wc_order_id, array(
+				'migration_status' => 'error',
+				'migration_message' => $error_message
+			));
+
+			return array('error' => $error_message);
+		}
+	}
+
+	/**
+	 * Prepare complete order data for BigCommerce API
+	 */
+	private function prepare_order_data($wc_order) {
+		$order_data = array(
+			// Basic order information
+			'status_id' => WC_BC_Order_Status_Mapper::map_status($wc_order->get_status()),
+			'date_created' => $wc_order->get_date_created()->format('c'),
+			'subtotal_ex_tax' => (float) $wc_order->get_subtotal(),
+			'subtotal_inc_tax' => (float) ($wc_order->get_subtotal() + $wc_order->get_total_tax()),
+			'total_ex_tax' => (float) ($wc_order->get_total() - $wc_order->get_total_tax()),
+			'total_inc_tax' => (float) $wc_order->get_total(),
+			'currency_code' => $wc_order->get_currency(),
+			'default_currency_code' => get_woocommerce_currency(),
+		);
+
+		// Customer information
+		$this->add_customer_data($order_data, $wc_order);
+
+		// Billing address
+		$this->add_billing_address($order_data, $wc_order);
+
+		// Products/Line items
+		$order_data['products'] = $this->prepare_order_products($wc_order);
+
+		// Shipping
+		$this->add_shipping_data($order_data, $wc_order);
+
+		// Tax information
+		$this->add_tax_data($order_data, $wc_order);
+
+		// Custom fields (including payment method)
+		$order_data['custom_fields'] = $this->prepare_order_custom_fields($wc_order);
+
+		// Order notes
+		$this->add_order_notes($order_data, $wc_order);
+
+		// Coupons/Discounts
+		$this->add_coupon_data($order_data, $wc_order);
+
+		return $order_data;
+	}
+
+	/**
+	 * Add customer data to order
+	 */
+	private function add_customer_data(&$order_data, $wc_order) {
+		$customer_id = $wc_order->get_customer_id();
+
+		if ($customer_id) {
+			// Registered customer
+			$customer_mapping = WC_BC_Customer_Database::get_customer_by_wp_id($customer_id);
+			if ($customer_mapping && $customer_mapping->bc_customer_id) {
+				$order_data['customer_id'] = (int) $customer_mapping->bc_customer_id;
+			}
+		}
+
+		// Always include customer information for guest orders or as backup
+		$order_data['billing_address']['email'] = $wc_order->get_billing_email();
+		if (!isset($order_data['customer_id'])) {
+			$order_data['customer_message'] = 'Guest order from WooCommerce migration';
+		}
+	}
+
+	/**
+	 * Add billing address to order
+	 */
+	private function add_billing_address(&$order_data, $wc_order) {
+		$order_data['billing_address'] = array(
+			'first_name' => $wc_order->get_billing_first_name(),
+			'last_name' => $wc_order->get_billing_last_name(),
+			'company' => $wc_order->get_billing_company(),
+			'street_1' => $wc_order->get_billing_address_1(),
+			'street_2' => $wc_order->get_billing_address_2(),
+			'city' => $wc_order->get_billing_city(),
+			'state' => $wc_order->get_billing_state(),
+			'zip' => $wc_order->get_billing_postcode(),
+			'country' => $wc_order->get_billing_country(),
+			'country_iso2' => WC_BC_Location_Mapper::get_country_code($wc_order->get_billing_country()),
+			'phone' => $wc_order->get_billing_phone(),
+			'email' => $wc_order->get_billing_email()
+		);
+	}
+
+	/**
+	 * Prepare order products/line items
+	 */
+	private function prepare_order_products($wc_order) {
+		global $wpdb;
+		$product_table = $wpdb->prefix . WC_BC_MIGRATOR_TABLE;
+		$products = array();
+
+		foreach ($wc_order->get_items() as $item_id => $item) {
+			$product_id = $item->get_product_id();
+			$variation_id = $item->get_variation_id();
+			$quantity = $item->get_quantity();
+
+			// Get BigCommerce product/variant ID
+			$bc_product_id = null;
+			$bc_variant_id = null;
+
+			if ($variation_id) {
+				// Get variation mapping
+				$mapping = $wpdb->get_row($wpdb->prepare(
+					"SELECT bc_product_id, bc_variation_id FROM $product_table 
+					 WHERE wc_product_id = %d AND wc_variation_id = %d AND status = 'success'",
+					$product_id,
+					$variation_id
+				));
+
+				if ($mapping) {
+					$bc_product_id = $mapping->bc_product_id;
+					$bc_variant_id = $mapping->bc_variation_id;
+				}
+			} else {
+				// Get simple product mapping
+				$bc_product_id = $wpdb->get_var($wpdb->prepare(
+					"SELECT bc_product_id FROM $product_table 
+					 WHERE wc_product_id = %d AND wc_variation_id IS NULL AND status = 'success'",
+					$product_id
+				));
+			}
+
+			if (!$bc_product_id) {
+				continue; // Skip products that aren't migrated
+			}
+
+			$product_data = array(
+				'product_id' => (int) $bc_product_id,
+				'quantity' => (int) $quantity,
+				'price_inc_tax' => (float) ($item->get_total() + $item->get_total_tax()) / $quantity,
+				'price_ex_tax' => (float) $item->get_total() / $quantity,
+				'name' => $item->get_name(),
+			);
+
+			if ($bc_variant_id) {
+				$product_data['variant_id'] = (int) $bc_variant_id;
+			}
+
+			// Add product options/meta
+			$item_meta = $item->get_meta_data();
+			if (!empty($item_meta)) {
+				$product_options = array();
+				foreach ($item_meta as $meta) {
+					$key = $meta->key;
+					$value = $meta->value;
+
+					// Skip internal WooCommerce meta
+					if (strpos($key, '_') === 0) {
+						continue;
+					}
+
+					$product_options[] = array(
+						'display_name' => $key,
+						'display_value' => $value
+					);
+				}
+
+				if (!empty($product_options)) {
+					$product_data['product_options'] = $product_options;
+				}
+			}
+
+			$products[] = $product_data;
+		}
+
+		return $products;
+	}
+
+	/**
+	 * Add shipping data to order
+	 */
+	private function add_shipping_data(&$order_data, $wc_order) {
+		// Shipping address
+		$shipping_address = array(
+			'first_name' => $wc_order->get_shipping_first_name() ?: $wc_order->get_billing_first_name(),
+			'last_name' => $wc_order->get_shipping_last_name() ?: $wc_order->get_billing_last_name(),
+			'company' => $wc_order->get_shipping_company() ?: $wc_order->get_billing_company(),
+			'street_1' => $wc_order->get_shipping_address_1() ?: $wc_order->get_billing_address_1(),
+			'street_2' => $wc_order->get_shipping_address_2() ?: $wc_order->get_billing_address_2(),
+			'city' => $wc_order->get_shipping_city() ?: $wc_order->get_billing_city(),
+			'state' => $wc_order->get_shipping_state() ?: $wc_order->get_billing_state(),
+			'zip' => $wc_order->get_shipping_postcode() ?: $wc_order->get_billing_postcode(),
+			'country' => $wc_order->get_shipping_country() ?: $wc_order->get_billing_country(),
+			'country_iso2' => WC_BC_Location_Mapper::get_country_code($wc_order->get_shipping_country() ?: $wc_order->get_billing_country()),
+		);
+
+		$order_data['shipping_addresses'] = array($shipping_address);
+
+		// Shipping cost
+		$shipping_total = $wc_order->get_shipping_total();
+		if ($shipping_total > 0) {
+			$order_data['shipping_cost_ex_tax'] = (float) $shipping_total;
+			$order_data['shipping_cost_inc_tax'] = (float) ($shipping_total + $wc_order->get_shipping_tax());
+		}
+
+		// Shipping method
+		$shipping_methods = $wc_order->get_shipping_methods();
+		if (!empty($shipping_methods)) {
+			$shipping_method = reset($shipping_methods);
+			$order_data['shipping_addresses'][0]['shipping_method'] = $shipping_method->get_method_title();
+		}
+	}
+
+	/**
+	 * Add tax data to order
+	 */
+	private function add_tax_data(&$order_data, $wc_order) {
+		$tax_total = $wc_order->get_total_tax();
+
+		if ($tax_total > 0) {
+			$order_data['total_tax'] = (float) $tax_total;
+
+			// Get tax details
+			$tax_items = $wc_order->get_items('tax');
+			if (!empty($tax_items)) {
+				$taxes = array();
+				foreach ($tax_items as $tax_item) {
+					$taxes[] = array(
+						'name' => $tax_item->get_name(),
+						'rate' => (float) $tax_item->get_rate_percent(),
+						'tax_amount' => (float) $tax_item->get_tax_total(),
+						'tax_on_shipping' => (float) $tax_item->get_shipping_tax_total()
+					);
+				}
+				$order_data['taxes'] = $taxes;
+			}
+		}
+	}
+
+	/**
+	 * Prepare custom fields including payment method and WC data
+	 */
+	private function prepare_order_custom_fields($wc_order) {
+		$custom_fields = array();
+
+		// WooCommerce order ID for reference
+		$custom_fields[] = array(
+			'name' => 'wc_order_id',
+			'value' => (string) $wc_order->get_id()
+		);
+
+		// Payment method information
+		$payment_custom_fields = WC_BC_Order_Status_Mapper::prepare_payment_method_custom_fields(
+			$wc_order->get_payment_method(),
+			$wc_order->get_payment_method_title(),
+			$wc_order->get_transaction_id()
+		);
+		$custom_fields = array_merge($custom_fields, $payment_custom_fields);
+
+		// Original order status
+		$custom_fields[] = array(
+			'name' => 'wc_order_status',
+			'value' => $wc_order->get_status()
+		);
+
+		// Order source
+		$custom_fields[] = array(
+			'name' => 'order_source',
+			'value' => 'WooCommerce Migration'
+		);
+
+		// Migration timestamp
+		$custom_fields[] = array(
+			'name' => 'migrated_at',
+			'value' => current_time('Y-m-d H:i:s')
+		);
+
+		// Financial status
+		$financial_status = WC_BC_Order_Status_Mapper::get_financial_status($wc_order);
+		$custom_fields[] = array(
+			'name' => 'wc_financial_status',
+			'value' => $financial_status
+		);
+
+		return $custom_fields;
+	}
+
+	/**
+	 * Add order notes to order
+	 */
+	private function add_order_notes(&$order_data, $wc_order) {
+		// Customer notes
+		$customer_note = $wc_order->get_customer_note();
+		if (!empty($customer_note)) {
+			$order_data['customer_message'] = $customer_note;
+		}
+
+		// Staff notes (order notes)
+		$notes = wc_get_order_notes(array('order_id' => $wc_order->get_id()));
+		if (!empty($notes)) {
+			$staff_notes = array();
+			foreach ($notes as $note) {
+				if ($note->customer_note == 0) { // Staff note
+					$staff_notes[] = '[' . $note->date_created->format('Y-m-d H:i:s') . '] ' . $note->content;
+				}
+			}
+
+			if (!empty($staff_notes)) {
+				$order_data['staff_notes'] = implode("\n", $staff_notes);
+			}
+		}
+	}
+
+	/**
+	 * Add coupon/discount data to order
+	 */
+	private function add_coupon_data(&$order_data, $wc_order) {
+		$coupons = $wc_order->get_items('coupon');
+
+		if (!empty($coupons)) {
+			$coupon_data = array();
+			$total_discount = 0;
+
+			foreach ($coupons as $coupon_item) {
+				$coupon_code = $coupon_item->get_code();
+				$discount_amount = abs($coupon_item->get_discount());
+				$total_discount += $discount_amount;
+
+				$coupon_data[] = array(
+					'code' => $coupon_code,
+					'discount' => (float) $discount_amount,
+					'type' => 'per_total_discount' // BigCommerce coupon type
+				);
+			}
+
+			if ($total_discount > 0) {
+				$order_data['discount_amount'] = (float) $total_discount;
+				$order_data['coupons'] = $coupon_data;
+			}
+		}
+	}
+
+	/**
+	 * Get migration statistics
+	 */
+	public function get_migration_stats() {
+		return WC_BC_Order_Database::get_dashboard_stats();
+	}
+
+	/**
+	 * Retry failed order migrations
+	 */
+	public function retry_failed_orders($batch_size = 10) {
+		$failed_orders = WC_BC_Order_Database::get_error_orders($batch_size);
+
+		if (empty($failed_orders)) {
+			return array(
+				'success' => true,
+				'message' => 'No failed orders to retry',
+				'processed' => 0
+			);
+		}
+
+		$processed = 0;
+		$errors = 0;
+
+		foreach ($failed_orders as $order_mapping) {
+			// Reset to pending
+			WC_BC_Order_Database::update_order_mapping($order_mapping->wc_order_id, array(
+				'migration_status' => 'pending',
+				'migration_message' => 'Retrying migration'
+			));
+
+			// Try to migrate again
+			$result = $this->migrate_single_order($order_mapping->wc_order_id);
+
+			if (isset($result['error'])) {
+				$errors++;
+			} else {
+				$processed++;
+			}
+
+			usleep(500000); // 0.5 second delay
+		}
+
+		return array(
+			'success' => true,
+			'processed' => $processed,
+			'errors' => $errors,
+			'remaining' => WC_BC_Order_Database::get_remaining_orders_count()
+		);
+	}
+}

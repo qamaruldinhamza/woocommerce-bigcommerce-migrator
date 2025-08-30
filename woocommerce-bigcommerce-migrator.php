@@ -35,6 +35,10 @@ require_once WC_BC_MIGRATOR_PATH . "includes/class-customer-database.php";
 require_once WC_BC_MIGRATOR_PATH . "includes/class-customer-migrator.php";
 require_once WC_BC_MIGRATOR_PATH . "includes/class-location-mapper.php";
 
+require_once WC_BC_MIGRATOR_PATH . "includes/class-order-database.php";
+require_once WC_BC_MIGRATOR_PATH . "includes/class-order-processor.php";
+require_once WC_BC_MIGRATOR_PATH . "includes/class-order-status-mapper.php";
+
 
 // Initialize the plugin
 add_action('plugins_loaded', function() {

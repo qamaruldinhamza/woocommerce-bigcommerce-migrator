@@ -54,15 +54,42 @@ class WC_BC_Order_Database {
 		global $wpdb;
 		$table_name = $wpdb->prefix . self::ORDER_MIGRATION_TABLE;
 
+		// First check if this wc_order_id already exists
+		$existing = $wpdb->get_var(
+			$wpdb->prepare("SELECT id FROM $table_name WHERE wc_order_id = %d", $data['wc_order_id'])
+		);
+
+		if ($existing) {
+			// Optionally: update instead of inserting a duplicate
+			return $wpdb->update(
+				$table_name,
+				array(
+					'bc_order_id' => isset($data['bc_order_id']) ? $data['bc_order_id'] : null,
+					'wc_customer_id' => isset($data['wc_customer_id']) ? $data['wc_customer_id'] : null,
+					'bc_customer_id' => isset($data['bc_customer_id']) ? $data['bc_customer_id'] : null,
+					'order_status' => $data['order_status'],
+					'order_total' => $data['order_total'],
+					'order_date' => $data['order_date'],
+					'payment_method' => isset($data['payment_method']) ? $data['payment_method'] : null,
+					'payment_method_title' => isset($data['payment_method_title']) ? $data['payment_method_title'] : null,
+					'migration_status' => $data['migration_status'],
+					'migration_message' => isset($data['migration_message']) ? $data['migration_message'] : null,
+					'migration_data' => isset($data['migration_data']) ? $data['migration_data'] : null
+				),
+				array('wc_order_id' => $data['wc_order_id']),
+				array('%d','%d','%d','%d','%s','%f','%s','%s','%s','%s','%s','%s'),
+				array('%d')
+			);
+		}
+
+		// No existing row, proceed with insert
 		$defaults = array(
 			'migration_status' => 'pending',
 			'order_total' => 0.00,
 			'order_date' => current_time('mysql')
 		);
-
 		$data = wp_parse_args($data, $defaults);
 
-		// Prepare the data for insertion
 		$insert_data = array(
 			'wc_order_id' => $data['wc_order_id'],
 			'bc_order_id' => isset($data['bc_order_id']) ? $data['bc_order_id'] : null,
@@ -78,20 +105,7 @@ class WC_BC_Order_Database {
 			'migration_data' => isset($data['migration_data']) ? $data['migration_data'] : null
 		);
 
-		$format = array(
-			'%d', // wc_order_id
-			'%d', // bc_order_id
-			'%d', // wc_customer_id
-			'%d', // bc_customer_id
-			'%s', // order_status
-			'%f', // order_total
-			'%s', // order_date
-			'%s', // payment_method
-			'%s', // payment_method_title
-			'%s', // migration_status
-			'%s', // migration_message
-			'%s'  // migration_data
-		);
+		$format = array('%d','%d','%d','%d','%s','%f','%s','%s','%s','%s','%s','%s');
 
 		$result = $wpdb->insert($table_name, $insert_data, $format);
 

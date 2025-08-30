@@ -18,7 +18,7 @@ class WC_BC_Order_Processor {
 	 */
 	public function prepare_orders($date_from = null, $date_to = null, $status_filter = null) {
 		// Ensure order migration table exists
-		ini_set('memory_limit', '512M');
+		//ini_set('memory_limit', '512M');
 		set_time_limit(300); // 5 minutes
 
 

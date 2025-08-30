@@ -61,7 +61,7 @@ class WC_BC_Order_Database {
 
 		if ($existing) {
 			// Optionally: update instead of inserting a duplicate
-			return $wpdb->update(
+			/*return $wpdb->update(
 				$table_name,
 				array(
 					'bc_order_id' => isset($data['bc_order_id']) ? $data['bc_order_id'] : null,
@@ -79,7 +79,9 @@ class WC_BC_Order_Database {
 				array('wc_order_id' => $data['wc_order_id']),
 				array('%d','%d','%d','%d','%s','%f','%s','%s','%s','%s','%s','%s'),
 				array('%d')
-			);
+			);*/
+
+			return $existing;
 		}
 
 		// No existing row, proceed with insert

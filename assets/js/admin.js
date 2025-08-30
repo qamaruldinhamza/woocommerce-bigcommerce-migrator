@@ -1194,16 +1194,9 @@
 
         this.showLoadingOverlay('Preparing orders for migration...');
 
-        var dateFrom = $('#order-date-from').val();
-        var dateTo = $('#order-date-to').val();
-
         $.ajax({
             url: wcBcMigrator.apiUrl + 'orders/prepare',
             method: 'POST',
-            data: {
-                date_from: dateFrom,
-                date_to: dateTo
-            },
             beforeSend: function(xhr) {
                 xhr.setRequestHeader('X-WP-Nonce', wcBcMigrator.nonce);
             },

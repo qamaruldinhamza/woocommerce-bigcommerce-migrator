@@ -241,15 +241,6 @@ $client_secret = get_option('wc_bc_client_secret', '');
                         <h3><?php _e('Initialize Order Migration', 'wc-bc-migrator'); ?></h3>
                         <p><?php _e('Prepare WooCommerce orders for migration. You can filter by date range and order status.', 'wc-bc-migrator'); ?></p>
 
-                        <div class="form-inline">
-                            <label><?php _e('Date From:', 'wc-bc-migrator'); ?>
-                                <input type="date" id="order-date-from" class="date-input">
-                            </label>
-                            <label><?php _e('Date To:', 'wc-bc-migrator'); ?>
-                                <input type="date" id="order-date-to" class="date-input">
-                            </label>
-                        </div>
-
                         <button class="button" id="prepare-orders">
                             <?php _e('Prepare Orders for Migration', 'wc-bc-migrator'); ?>
                         </button>

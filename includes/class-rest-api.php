@@ -475,21 +475,25 @@ class WC_BC_REST_API {
 	 */
 	public function prepare_orders($request) {
 		try {
-			$date_from = $request->get_param('date_from');
-			$date_to = $request->get_param('date_to');
-			$status_filter = $request->get_param('status_filter');
+			// Clear any existing output
+			if (ob_get_level()) {
+				ob_end_clean();
+			}
 
 			$processor = new WC_BC_Order_Processor();
-			$result = $processor->prepare_orders($date_from, $date_to, $status_filter);
+			$result = $processor->prepare_orders();
 
 			return new WP_REST_Response($result, 200);
 		} catch (Exception $e) {
+			error_log("Order preparation error: " . $e->getMessage());
+
 			return new WP_REST_Response(array(
 				'success' => false,
-				'message' => $e->getMessage()
+				'message' => 'Memory or timeout error during preparation. Try smaller batches.'
 			), 500);
 		}
 	}
+
 
 	/**
 	 * Migrate orders batch

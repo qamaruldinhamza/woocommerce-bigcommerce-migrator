@@ -18,6 +18,10 @@ class WC_BC_Order_Processor {
 	 */
 	public function prepare_orders($date_from = null, $date_to = null, $status_filter = null) {
 		// Ensure order migration table exists
+		ini_set('memory_limit', '512M');
+		set_time_limit(300); // 5 minutes
+
+
 		if (!WC_BC_Order_Database::create_table()) {
 			return array(
 				'success' => false,
@@ -25,63 +29,64 @@ class WC_BC_Order_Processor {
 			);
 		}
 
-		$args = array(
-			'type' => 'shop_order',
-			'status' => 'any',
-			'limit' => -1,
-			'return' => 'ids',
-			'meta_query' => array()
-		);
-
-		// Add date filters if provided
-		if ($date_from) {
-			$args['date_created'] = '>=' . $date_from;
-		}
-		if ($date_to) {
-			$args['date_created'] = '<=' . $date_to;
-		}
-
-		// Add status filter if provided
-		if ($status_filter && is_array($status_filter)) {
-			$args['status'] = $status_filter;
-		}
-
-		$order_ids = wc_get_orders($args);
-
+		$batch_size = 500; // Process 500 orders at a time
+		$offset = 0;
 		$inserted = 0;
 		$skipped = 0;
 		$errors = 0;
 
-		foreach ($order_ids as $order_id) {
-			// Check if already exists
-			$existing = WC_BC_Order_Database::get_order_by_wc_id($order_id);
-			if ($existing) {
-				$skipped++;
-				continue;
+		do {
+			$args = array(
+				'type' => 'shop_order',
+				'status' => 'any',
+				'limit' => $batch_size,
+				'offset' => $offset,
+				'return' => 'ids',
+				'orderby' => 'ID',
+				'order' => 'ASC'
+			);
+
+			$order_ids = wc_get_orders($args);
+
+			foreach ($order_ids as $order_id) {
+				// Check if already exists
+				$existing = WC_BC_Order_Database::get_order_by_wc_id($order_id);
+				if ($existing) {
+					$skipped++;
+					continue;
+				}
+
+				$order = wc_get_order($order_id);
+				if (!$order) {
+					$errors++;
+					continue;
+				}
+
+				// Prepare order data for database
+				$order_data = $this->extract_order_basic_data($order);
+				$result = WC_BC_Order_Database::insert_order_mapping($order_data);
+
+				if ($result) {
+					$inserted++;
+				} else {
+					$errors++;
+					error_log("Failed to prepare order {$order_id} for migration");
+				}
+
+				// Clear memory after each order
+				unset($order);
 			}
 
-			$order = wc_get_order($order_id);
-			if (!$order) {
-				$errors++;
-				continue;
-			}
+			$offset += $batch_size;
 
-			// Prepare order data for database
-			$order_data = $this->extract_order_basic_data($order);
+			// Clear memory after each batch
+			wp_cache_flush();
 
-			$result = WC_BC_Order_Database::insert_order_mapping($order_data);
-
-			if ($result) {
-				$inserted++;
-			} else {
-				$errors++;
-				error_log("Failed to prepare order {$order_id} for migration");
-			}
-		}
+		} while (count($order_ids) === $batch_size);
 
 		return array(
 			'success' => true,
-			'total_found' => count($order_ids),
+			'total_processed' => $inserted + $skipped + $errors,
 			'inserted' => $inserted,
 			'skipped' => $skipped,
 			'errors' => $errors

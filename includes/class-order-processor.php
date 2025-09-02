@@ -286,6 +286,7 @@ class WC_BC_Order_Processor {
 
 	/**
 	 * Tries to get a fully-mapped line item, falls back to a custom line item.
+	 * CORRECTED: Now handles cases where the original WooCommerce product has been deleted.
 	 */
 	private function get_v2_line_item($item) {
 		// Tier 1: Try to get a fully mapped product with options
@@ -294,14 +295,32 @@ class WC_BC_Order_Processor {
 			return $mapped_product;
 		}
 
-		// Tier 2: Fallback to creating a custom product line item
-		error_log("Order #" . $item->get_order_id() . ": Falling back to custom product for item '" . $item->get_name() . "'. Check product mapping table.");
+		// Tier 2: Fallback to creating a custom product line item.
+		// This is crucial for orders with deleted products.
+		error_log("Order #" . $item->get_order_id() . ": Falling back to custom product for item '" . $item->get_name() . "'. The original product may be deleted or unmapped.");
+
+		// Get the WC_Product object associated with the item
+		$product = $item->get_product();
+
+		// **THIS IS THE FIX**: Check if the product object is valid before using it.
+		if (!is_object($product)) {
+			// If the product doesn't exist, create a custom product with data from the order item itself.
+			return array(
+				'name'          => $item->get_name(),
+				'quantity'      => (int) $item->get_quantity(),
+				'price_ex_tax'  => (float) $item->get_subtotal() / $item->get_quantity(),
+				'price_inc_tax' => (float) $item->get_total() / $item->get_quantity(),
+				'sku'           => 'WC-DELETED-PROD-' . $item->get_product_id()
+			);
+		}
+
+		// If the product exists but couldn't be mapped, create a custom product and include its SKU.
 		return array(
-			'name' => $item->get_name(),
-			'quantity' => (int) $item->get_quantity(),
-			'price_ex_tax' => (float) $item->get_subtotal() / $item->get_quantity(),
+			'name'          => $item->get_name(),
+			'quantity'      => (int) $item->get_quantity(),
+			'price_ex_tax'  => (float) $item->get_subtotal() / $item->get_quantity(),
 			'price_inc_tax' => (float) $item->get_total() / $item->get_quantity(),
-			'sku' => 'WC-' . ($item->get_variation_id() ?: $item->get_product_id()) . '-' . $item->get_product()->get_sku(),
+			'sku'           => 'WC-' . ($item->get_variation_id() ?: $item->get_product_id()) . '-' . $product->get_sku(),
 		);
 	}
 

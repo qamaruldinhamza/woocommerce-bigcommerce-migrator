@@ -151,6 +151,7 @@ class WC_BC_Order_Processor {
 					'migration_status' => 'skipped',
 					'migration_message' => 'Waiting for all order products to be migrated'
 				));
+				$errors++;
 				continue;
 			}
 

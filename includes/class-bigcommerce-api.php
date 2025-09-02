@@ -12,10 +12,14 @@ class WC_BC_BigCommerce_API {
 		$this->store_hash = get_option('wc_bc_store_hash');
 		$this->access_token = get_option('wc_bc_access_token');
 		$this->api_url = 'https://api.bigcommerce.com/stores/' . $this->store_hash . '/v3/';
+		$this->api_v2_url = 'https://api.bigcommerce.com/stores/' . $this->store_hash . '/v2/'; // ADD THIS LINE
 	}
 
-	private function make_request($endpoint, $method = 'GET', $data = null) {
-		$full_url = $this->api_url . $endpoint;
+	private function make_request($endpoint, $method = 'GET', $data = null, $api_version = 'v3') { // ADD API VERSION PARAM
+
+		// CHOOSE URL BASED ON VERSION
+		$base_url = ($api_version === 'v2') ? $this->api_v2_url : $this->api_url;
+		$full_url = $base_url . $endpoint;
 
 		$args = array(
 			'method' => $method,
@@ -42,12 +46,19 @@ class WC_BC_BigCommerce_API {
 
 		$data = json_decode($body, true);
 
+		// For V2, a 201 or 200 is success, but the data isn't nested in a 'data' key
+		if ($api_version === 'v2' && ($status_code === 201 || $status_code === 200)) {
+			return array('data' => $data); // Wrap in 'data' key for consistency
+		}
+
 		if ($status_code >= 400) {
 			// More detailed error information
 			$error_message = 'API Error';
 			if (is_array($data)) {
 				if (isset($data['title'])) {
 					$error_message = $data['title'];
+				} elseif (is_array($data) && isset($data[0]['message'])) { // V2 error format
+					$error_message = $data[0]['message'];
 				} elseif (isset($data['message'])) {
 					$error_message = $data['message'];
 				} elseif (isset($data['error'])) {
@@ -269,10 +280,12 @@ class WC_BC_BigCommerce_API {
 
 	/**
 	 * Create an order in BigCommerce
+	 * CORRECTED: This now uses the V2 API endpoint, which is required for historical orders.
 	 */
 	public function create_order($order_data) {
 		$endpoint = 'orders';
-		return $this->make_request($endpoint, 'POST', $order_data);
+		// The last parameter specifies to use the 'v2' API endpoint and logic
+		return $this->make_request($endpoint, 'POST', $order_data, 'v2');
 	}
 
 	/**

@@ -518,32 +518,22 @@ class WC_BC_REST_API {
 	 */
 	public function get_order_stats() {
 		try {
-			$processor = new WC_BC_Order_Processor();
-			$stats = $processor->get_migration_stats();
+			// Use the efficient dashboard stats function directly
+			$stats = WC_BC_Order_Database::get_dashboard_stats();
 
 			$formatted_stats = array(
-				'total' => (int) ($stats['total'] ?? 0),
-				'pending' => 0,
-				'success' => 0,
-				'error' => 0,
-				'skipped' => 0,
-				'total_value' => (float) ($stats['total_value'] ?? 0),
-				'average_value' => (float) ($stats['average_value'] ?? 0)
+				'total'   => (int) ($stats['total'] ?? 0),
+				'pending' => (int) ($stats['pending'] ?? 0),
+				'success' => (int) ($stats['success'] ?? 0),
+				'error'   => (int) ($stats['error'] ?? 0),
+				'skipped' => (int) ($stats['skipped'] ?? 0)
 			);
-
-			// Get status breakdown from database
-			$status_stats = WC_BC_Order_Database::get_order_migration_stats();
-
-			if (isset($status_stats['status_breakdown'])) {
-				foreach ($status_stats['status_breakdown'] as $stat) {
-					$formatted_stats[$stat->status] = (int) $stat->count;
-				}
-			}
 
 			return new WP_REST_Response(array(
 				'success' => true,
-				'stats' => $formatted_stats
+				'stats'   => $formatted_stats
 			), 200);
+
 		} catch (Exception $e) {
 			return new WP_REST_Response(array(
 				'success' => false,

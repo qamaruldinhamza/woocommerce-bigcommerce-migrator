@@ -18,9 +18,7 @@ class WC_BC_Order_Processor {
 	 */
 	public function prepare_orders($date_from = null, $date_to = null, $status_filter = null) {
 		// Ensure order migration table exists
-		//ini_set('memory_limit', '512M');
 		set_time_limit(300); // 5 minutes
-
 
 		if (!WC_BC_Order_Database::create_table()) {
 			return array(
@@ -37,16 +35,20 @@ class WC_BC_Order_Processor {
 
 		do {
 			$args = array(
-				'type' => 'shop_order',
-				'status' => 'any',
-				'limit' => $batch_size,
+				'type'   => 'shop_order',
+				'status' => array_keys(wc_get_order_statuses()),
+				'limit'  => $batch_size,
 				'offset' => $offset,
 				'return' => 'ids',
-				'orderby' => 'ID',
-				'order' => 'ASC'
+				'orderby'=> 'ID',
+				'order'  => 'ASC'
 			);
 
 			$order_ids = wc_get_orders($args);
+
+			if (empty($order_ids)) {
+				break; // No more orders to process
+			}
 
 			foreach ($order_ids as $order_id) {
 				// Check if already exists
@@ -85,11 +87,11 @@ class WC_BC_Order_Processor {
 		} while (count($order_ids) === $batch_size);
 
 		return array(
-			'success' => true,
+			'success'         => true,
 			'total_processed' => $inserted + $skipped + $errors,
-			'inserted' => $inserted,
-			'skipped' => $skipped,
-			'errors' => $errors
+			'inserted'        => $inserted,
+			'skipped'         => $skipped,
+			'errors'          => $errors
 		);
 	}
 
@@ -236,46 +238,174 @@ class WC_BC_Order_Processor {
 	}
 
 	/**
-	 * Prepare complete order data for BigCommerce API
+	 * Prepare complete order data for BigCommerce V2 API
+	 * REWRITTEN: This function and its helpers are rebuilt to match the V2 API schema.
 	 */
 	private function prepare_order_data($wc_order) {
+
+		$bc_customer_id = 0; // Default for guest orders
+		$customer_id = $wc_order->get_customer_id();
+		if ($customer_id) {
+			$customer_mapping = WC_BC_Customer_Database::get_customer_by_wp_id($customer_id);
+			if ($customer_mapping && $customer_mapping->bc_customer_id) {
+				$bc_customer_id = (int) $customer_mapping->bc_customer_id;
+			}
+		}
+
 		$order_data = array(
-			// Basic order information
+			// V2 top-level fields
+			'customer_id' => $bc_customer_id,
 			'status_id' => WC_BC_Order_Status_Mapper::map_status($wc_order->get_status()),
-			'date_created' => $wc_order->get_date_created()->format('c'),
+			'date_created' => $wc_order->get_date_created()->format('r'), // RFC 2822 format for V2
+			'billing_address' => $this->prepare_v2_billing_address($wc_order),
+			'shipping_addresses' => $this->prepare_v2_shipping_addresses($wc_order),
+			'products' => $this->prepare_v2_order_products($wc_order),
 			'subtotal_ex_tax' => (float) $wc_order->get_subtotal(),
-			'subtotal_inc_tax' => (float) ($wc_order->get_subtotal() + $wc_order->get_total_tax()),
 			'total_ex_tax' => (float) ($wc_order->get_total() - $wc_order->get_total_tax()),
 			'total_inc_tax' => (float) $wc_order->get_total(),
+			'shipping_cost_ex_tax' => (float) $wc_order->get_shipping_total(),
+			'payment_method' => $wc_order->get_payment_method_title(),
+			'staff_notes' => 'Migrated from WooCommerce. WC Order ID: ' . $wc_order->get_id(),
+			'customer_message' => $wc_order->get_customer_note(),
+			'discount_amount' => (float) $wc_order->get_discount_total(),
+			'coupon_discount' => (float) $wc_order->get_discount_total(),
 			'currency_code' => $wc_order->get_currency(),
-			'default_currency_code' => get_woocommerce_currency(),
+			'is_deleted' => false,
 		);
 
-		// Customer information
-		$this->add_customer_data($order_data, $wc_order);
-
-		// Billing address
-		$this->add_billing_address($order_data, $wc_order);
-
-		// Products/Line items
-		$order_data['products'] = $this->prepare_order_products($wc_order);
-
-		// Shipping
-		$this->add_shipping_data($order_data, $wc_order);
-
-		// Tax information
-		$this->add_tax_data($order_data, $wc_order);
-
-		// Custom fields (including payment method)
-		$order_data['custom_fields'] = $this->prepare_order_custom_fields($wc_order);
-
-		// Order notes
-		$this->add_order_notes($order_data, $wc_order);
-
-		// Coupons/Discounts
-		$this->add_coupon_data($order_data, $wc_order);
-
 		return $order_data;
+	}
+
+	/**
+	 * Prepare V2 billing address
+	 */
+	private function prepare_v2_billing_address($wc_order) {
+		return array(
+			'first_name' => $wc_order->get_billing_first_name(),
+			'last_name' => $wc_order->get_billing_last_name(),
+			'company' => $wc_order->get_billing_company(),
+			'street_1' => $wc_order->get_billing_address_1(),
+			'street_2' => $wc_order->get_billing_address_2(),
+			'city' => $wc_order->get_billing_city(),
+			'state' => WC_BC_Location_Mapper::get_full_state_name($wc_order->get_billing_state(), $wc_order->get_billing_country()),
+			'zip' => $wc_order->get_billing_postcode(),
+			'country' => WC()->countries->countries[$wc_order->get_billing_country()] ?? $wc_order->get_billing_country(),
+			'country_iso2' => $wc_order->get_billing_country(),
+			'phone' => $wc_order->get_billing_phone(),
+			'email' => $wc_order->get_billing_email(),
+		);
+	}
+
+	/**
+	 * Prepare V2 shipping addresses
+	 */
+	private function prepare_v2_shipping_addresses($wc_order) {
+		if (!$wc_order->get_shipping_address_1()) {
+			return array();
+		}
+
+		$shipping_methods = $wc_order->get_shipping_methods();
+		$shipping_method_name = !empty($shipping_methods) ? reset($shipping_methods)->get_method_title() : 'Migrated Shipping';
+
+		$shipping_address = array(
+			'first_name' => $wc_order->get_shipping_first_name(),
+			'last_name' => $wc_order->get_shipping_last_name(),
+			'company' => $wc_order->get_shipping_company(),
+			'street_1' => $wc_order->get_shipping_address_1(),
+			'street_2' => $wc_order->get_shipping_address_2(),
+			'city' => $wc_order->get_shipping_city(),
+			'state' => WC_BC_Location_Mapper::get_full_state_name($wc_order->get_shipping_state(), $wc_order->get_shipping_country()),
+			'zip' => $wc_order->get_shipping_postcode(),
+			'country' => WC()->countries->countries[$wc_order->get_shipping_country()] ?? $wc_order->get_shipping_country(),
+			'country_iso2' => $wc_order->get_shipping_country(),
+			'shipping_method' => $shipping_method_name,
+		);
+
+		return array($shipping_address);
+	}
+
+	/**
+	 * Prepare V2 order products
+	 */
+	private function prepare_v2_order_products($wc_order) {
+		global $wpdb;
+		$product_table = $wpdb->prefix . WC_BC_MIGRATOR_TABLE;
+		$products = array();
+
+		foreach ($wc_order->get_items() as $item_id => $item) {
+			$product_id = $item->get_product_id();
+			$variation_id = $item->get_variation_id();
+
+			$bc_product_id = null;
+			$product_options = array();
+
+			if ($variation_id) {
+				$mapping = $wpdb->get_row($wpdb->prepare(
+					"SELECT bc_product_id, bc_variation_id FROM $product_table WHERE wc_product_id = %d AND wc_variation_id = %d AND status = 'success'",
+					$product_id, $variation_id
+				));
+
+				if (!$mapping) continue; // Skip if variation not migrated
+
+				$bc_product_id = $mapping->bc_product_id;
+				$wc_variation = wc_get_product($variation_id);
+				if ($wc_variation) {
+					$product_options = $this->get_v2_product_options($wc_variation, $bc_product_id);
+				}
+			} else {
+				$bc_product_id = $wpdb->get_var($wpdb->prepare(
+					"SELECT bc_product_id FROM $product_table WHERE wc_product_id = %d AND wc_variation_id IS NULL AND status = 'success'",
+					$product_id
+				));
+				if (!$bc_product_id) continue;
+			}
+
+			$products[] = array(
+				'product_id' => (int) $bc_product_id,
+				'quantity' => (int) $item->get_quantity(),
+				'price_inc_tax' => (float) ($item->get_total() + $item->get_total_tax()) / $item->get_quantity(),
+				'price_ex_tax' => (float) $item->get_total() / $item->get_quantity(),
+				'product_options' => $product_options
+			);
+		}
+
+		return $products;
+	}
+
+	/**
+	 * Get product options in V2 format for a variation
+	 */
+	private function get_v2_product_options($wc_variation, $bc_product_id) {
+		$options = array();
+		$attributes = $wc_variation->get_attributes();
+
+		// Get options from BigCommerce product to find the correct product_option_id
+		$bc_options_response = $this->bc_api->get_product_options($bc_product_id);
+		if (!isset($bc_options_response['data'])) return array();
+
+		$bc_options = $bc_options_response['data'];
+
+		foreach ($attributes as $taxonomy => $value_slug) {
+			$term = get_term_by('slug', $value_slug, 'pa_' . $taxonomy);
+			if (!$term) continue;
+
+			$attribute_label = wc_attribute_label('pa_' . $taxonomy);
+
+			foreach ($bc_options as $bc_option) {
+				if ($bc_option['display_name'] === $attribute_label) {
+					foreach ($bc_option['option_values'] as $bc_option_value) {
+						if ($bc_option_value['label'] === $term->name) {
+							$options[] = array(
+								'product_option_id' => $bc_option['id'],
+								'value' => $bc_option_value['id']
+							);
+							break 2; // Move to the next attribute
+						}
+					}
+				}
+			}
+		}
+		return $options;
 	}
 
 	/**

@@ -278,44 +278,59 @@ class WC_BC_Order_Database {
 	}
 
 	/**
-	 * Check if an order's products are all migrated
+	 * Check if an order's products are all migrated (with detailed logging)
 	 */
 	public static function check_order_products_migrated($wc_order_id) {
 		$order = wc_get_order($wc_order_id);
 		if (!$order) {
+			error_log("Order Check Failed: Could not find WC Order #{$wc_order_id}.");
 			return false;
 		}
 
 		global $wpdb;
 		$product_table = $wpdb->prefix . WC_BC_MIGRATOR_TABLE;
 
-		foreach ($order->get_items() as $item) {
+		foreach ($order->get_items() as $item_id => $item) {
 			$product_id = $item->get_product_id();
 			$variation_id = $item->get_variation_id();
+			$item_name = $item->get_name();
 
-			// Check if product is migrated
+			// Skip items if the product doesn't exist anymore
+			if (empty($product_id)) {
+				continue;
+			}
+
 			if ($variation_id) {
-				// Check variation
+				// It's a variation product
 				$migrated = $wpdb->get_var($wpdb->prepare(
-					"SELECT bc_variation_id FROM $product_table 
-					 WHERE wc_product_id = %d AND wc_variation_id = %d AND status = 'success'",
+					"SELECT bc_variation_id FROM $product_table WHERE wc_product_id = %d AND wc_variation_id = %d AND status = 'success'",
 					$product_id,
 					$variation_id
 				));
 			} else {
-				// Check simple product
+				// It's a simple product
 				$migrated = $wpdb->get_var($wpdb->prepare(
-					"SELECT bc_product_id FROM $product_table 
-					 WHERE wc_product_id = %d AND wc_variation_id IS NULL AND status = 'success'",
+					"SELECT bc_product_id FROM $product_table WHERE wc_product_id = %d AND wc_variation_id IS NULL AND status = 'success'",
 					$product_id
 				));
 			}
 
+			// If a migrated ID is not found, the check fails. Log the details.
 			if (!$migrated) {
-				return false;
+				$log_message = "Order #{$wc_order_id} skipped. Reason: Product '{$item_name}' (";
+				if ($variation_id) {
+					$log_message .= "WC Product ID: {$product_id}, WC Variation ID: {$variation_id}";
+				} else {
+					$log_message .= "WC Product ID: {$product_id}";
+				}
+				$log_message .= ") is not marked as 'success' in the migration table.";
+
+				error_log($log_message);
+				return false; // Stop checking and fail the order
 			}
 		}
 
+		// If the loop completes, all products are migrated successfully.
 		return true;
 	}
 

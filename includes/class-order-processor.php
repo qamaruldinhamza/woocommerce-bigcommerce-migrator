@@ -269,7 +269,7 @@ class WC_BC_Order_Processor {
 			'customer_message' => $wc_order->get_customer_note(),
 			'discount_amount' => (float) $wc_order->get_discount_total(),
 			'coupon_discount' => (float) $wc_order->get_discount_total(),
-			'currency_code' => $wc_order->get_currency(),
+			//'currency_code' => $wc_order->get_currency(),
 			'is_deleted' => false,
 		);
 

@@ -195,7 +195,7 @@ class WC_BC_Order_Processor {
 
 	/**
 	 * Prepare complete order data for BigCommerce V2 API
-	 * REWRITTEN: This function and its helpers are rebuilt to match the V2 API schema.
+	 * REWRITTEN: Fixes the API error and correctly saves coupon codes to staff notes.
 	 */
 	private function prepare_order_data($wc_order) {
 		$bc_customer_id = 0; // Default for guest orders
@@ -206,6 +206,14 @@ class WC_BC_Order_Processor {
 				$bc_customer_id = (int) $customer_mapping->bc_customer_id;
 			}
 		}
+
+		// --- NEW: Prepare Staff Notes with Coupon Codes ---
+		$staff_notes = 'Migrated from WooCommerce. WC Order ID: ' . $wc_order->get_id();
+		$coupon_codes = $wc_order->get_coupon_codes();
+		if (!empty($coupon_codes)) {
+			$staff_notes .= ' | Coupon(s) Used: ' . implode(', ', $coupon_codes);
+		}
+		// --- END NEW ---
 
 		return array(
 			'customer_id' => $bc_customer_id,
@@ -219,10 +227,10 @@ class WC_BC_Order_Processor {
 			'total_inc_tax' => (float) $wc_order->get_total(),
 			'shipping_cost_ex_tax' => (float) $wc_order->get_shipping_total(),
 			'payment_method' => $wc_order->get_payment_method_title(),
-			'staff_notes' => 'Migrated from WooCommerce. WC Order ID: ' . $wc_order->get_id(),
+			'staff_notes' => $staff_notes, // Use the new variable with coupon codes
 			'customer_message' => $wc_order->get_customer_note(),
 			'discount_amount' => (float) $wc_order->get_discount_total(),
-			'coupon_discount' => (float) $wc_order->get_discount_total(),
+			//'coupon_discount' is now correctly removed
 			'is_deleted' => false,
 		);
 	}

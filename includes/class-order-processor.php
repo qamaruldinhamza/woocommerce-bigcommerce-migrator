@@ -109,7 +109,6 @@ class WC_BC_Order_Processor {
 
 	/**
 	 * Process a batch of orders for migration
-	 * REWRITTEN: Removes the dependency check and processes all pending orders.
 	 */
 	public function process_batch($batch_size = 10) {
 		$pending_orders = WC_BC_Order_Database::get_pending_orders($batch_size);
@@ -195,10 +194,10 @@ class WC_BC_Order_Processor {
 
 	/**
 	 * Prepare complete order data for BigCommerce V2 API
-	 * REWRITTEN: Fixes the API error and correctly saves coupon codes to staff notes.
+	 * CORRECTED: Now includes both shipping tax fields.
 	 */
 	private function prepare_order_data($wc_order) {
-		$bc_customer_id = 0; // Default for guest orders
+		$bc_customer_id = 0;
 		$customer_id = $wc_order->get_customer_id();
 		if ($customer_id) {
 			$customer_mapping = WC_BC_Customer_Database::get_customer_by_wp_id($customer_id);
@@ -207,13 +206,11 @@ class WC_BC_Order_Processor {
 			}
 		}
 
-		// --- NEW: Prepare Staff Notes with Coupon Codes ---
 		$staff_notes = 'Migrated from WooCommerce. WC Order ID: ' . $wc_order->get_id();
 		$coupon_codes = $wc_order->get_coupon_codes();
 		if (!empty($coupon_codes)) {
 			$staff_notes .= ' | Coupon(s) Used: ' . implode(', ', $coupon_codes);
 		}
-		// --- END NEW ---
 
 		return array(
 			'customer_id' => $bc_customer_id,
@@ -226,16 +223,23 @@ class WC_BC_Order_Processor {
 			'total_ex_tax' => (float) ($wc_order->get_total() - $wc_order->get_total_tax()),
 			'total_inc_tax' => (float) $wc_order->get_total(),
 			'shipping_cost_ex_tax' => (float) $wc_order->get_shipping_total(),
+			'shipping_cost_inc_tax' => (float) ($wc_order->get_shipping_total() + $wc_order->get_shipping_tax()), // THIS LINE IS THE FIX
 			'payment_method' => $wc_order->get_payment_method_title(),
-			'staff_notes' => $staff_notes, // Use the new variable with coupon codes
+			'staff_notes' => $staff_notes,
 			'customer_message' => $wc_order->get_customer_note(),
 			'discount_amount' => (float) $wc_order->get_discount_total(),
-			//'coupon_discount' is now correctly removed
-			//'is_deleted' => false,
 		);
 	}
 
+	/**
+	 * Prepare V2 billing address
+	 * CORRECTED: Now safely handles invalid country codes.
+	 */
 	private function prepare_v2_billing_address($wc_order) {
+		$country_code = $wc_order->get_billing_country();
+		$countries = WC()->countries->get_countries();
+		$country_name = $countries[$country_code] ?? $country_code; // Fallback to code if name not found
+
 		return array(
 			'first_name' => $wc_order->get_billing_first_name(),
 			'last_name' => $wc_order->get_billing_last_name(),
@@ -243,15 +247,19 @@ class WC_BC_Order_Processor {
 			'street_1' => $wc_order->get_billing_address_1(),
 			'street_2' => $wc_order->get_billing_address_2(),
 			'city' => $wc_order->get_billing_city(),
-			'state' => WC_BC_Location_Mapper::get_full_state_name($wc_order->get_billing_state(), $wc_order->get_billing_country()),
+			'state' => WC_BC_Location_Mapper::get_full_state_name($wc_order->get_billing_state(), $country_code),
 			'zip' => $wc_order->get_billing_postcode(),
-			'country' => WC()->countries->countries[$wc_order->get_billing_country()] ?? $wc_order->get_billing_country(),
-			'country_iso2' => $wc_order->get_billing_country(),
+			'country' => $country_name,
+			'country_iso2' => $country_code,
 			'phone' => $wc_order->get_billing_phone(),
 			'email' => $wc_order->get_billing_email(),
 		);
 	}
 
+	/**
+	 * Prepare V2 shipping addresses
+	 * CORRECTED: Now safely handles invalid country codes.
+	 */
 	private function prepare_v2_shipping_addresses($wc_order) {
 		if (!$wc_order->get_shipping_address_1()) {
 			return array();
@@ -260,6 +268,10 @@ class WC_BC_Order_Processor {
 		$shipping_methods = $wc_order->get_shipping_methods();
 		$shipping_method_name = !empty($shipping_methods) ? reset($shipping_methods)->get_method_title() : 'Migrated Shipping';
 
+		$country_code = $wc_order->get_shipping_country();
+		$countries = WC()->countries->get_countries();
+		$country_name = $countries[$country_code] ?? $country_code;
+
 		$shipping_address = array(
 			'first_name' => $wc_order->get_shipping_first_name(),
 			'last_name' => $wc_order->get_shipping_last_name(),
@@ -267,10 +279,10 @@ class WC_BC_Order_Processor {
 			'street_1' => $wc_order->get_shipping_address_1(),
 			'street_2' => $wc_order->get_shipping_address_2(),
 			'city' => $wc_order->get_shipping_city(),
-			'state' => WC_BC_Location_Mapper::get_full_state_name($wc_order->get_shipping_state(), $wc_order->get_shipping_country()),
+			'state' => WC_BC_Location_Mapper::get_full_state_name($wc_order->get_shipping_state(), $country_code),
 			'zip' => $wc_order->get_shipping_postcode(),
-			'country' => WC()->countries->countries[$wc_order->get_shipping_country()] ?? $wc_order->get_shipping_country(),
-			'country_iso2' => $wc_order->get_shipping_country(),
+			'country' => $country_name,
+			'country_iso2' => $country_code,
 			'shipping_method' => $shipping_method_name,
 		);
 
@@ -294,25 +306,18 @@ class WC_BC_Order_Processor {
 
 	/**
 	 * Tries to get a fully-mapped line item, falls back to a custom line item.
-	 * CORRECTED: Now handles cases where the original WooCommerce product has been deleted.
 	 */
 	private function get_v2_line_item($item) {
-		// Tier 1: Try to get a fully mapped product with options
 		$mapped_product = $this->get_v2_mapped_product($item);
 		if ($mapped_product) {
 			return $mapped_product;
 		}
 
-		// Tier 2: Fallback to creating a custom product line item.
-		// This is crucial for orders with deleted products.
 		error_log("Order #" . $item->get_order_id() . ": Falling back to custom product for item '" . $item->get_name() . "'. The original product may be deleted or unmapped.");
 
-		// Get the WC_Product object associated with the item
 		$product = $item->get_product();
 
-		// **THIS IS THE FIX**: Check if the product object is valid before using it.
 		if (!is_object($product)) {
-			// If the product doesn't exist, create a custom product with data from the order item itself.
 			return array(
 				'name'          => $item->get_name(),
 				'quantity'      => (int) $item->get_quantity(),
@@ -322,7 +327,6 @@ class WC_BC_Order_Processor {
 			);
 		}
 
-		// If the product exists but couldn't be mapped, create a custom product and include its SKU.
 		return array(
 			'name'          => $item->get_name(),
 			'quantity'      => (int) $item->get_quantity(),
@@ -358,7 +362,6 @@ class WC_BC_Order_Processor {
 			$wc_variation = wc_get_product($variation_id);
 			if ($wc_variation) {
 				$product_options = $this->get_v2_product_options_from_db($wc_variation, $bc_product_id);
-				// If options are not found for a variant, it's a failure
 				if (empty($product_options)) return null;
 			} else {
 				return null;
@@ -753,24 +756,18 @@ class WC_BC_Order_Processor {
 		$failed_orders = WC_BC_Order_Database::get_error_orders($batch_size);
 
 		if (empty($failed_orders)) {
-			return array(
-				'success' => true,
-				'message' => 'No failed orders to retry',
-				'processed' => 0
-			);
+			return array('success' => true, 'message' => 'No failed orders to retry', 'processed' => 0);
 		}
 
 		$processed = 0;
 		$errors = 0;
 
 		foreach ($failed_orders as $order_mapping) {
-			// Reset to pending
 			WC_BC_Order_Database::update_order_mapping($order_mapping->wc_order_id, array(
 				'migration_status' => 'pending',
 				'migration_message' => 'Retrying migration'
 			));
 
-			// Try to migrate again
 			$result = $this->migrate_single_order($order_mapping->wc_order_id);
 
 			if (isset($result['error'])) {
@@ -778,8 +775,7 @@ class WC_BC_Order_Processor {
 			} else {
 				$processed++;
 			}
-
-			usleep(500000); // 0.5 second delay
+			usleep(500000);
 		}
 
 		return array(

@@ -194,7 +194,7 @@ class WC_BC_Order_Processor {
 
 	/**
 	 * Prepare complete order data for BigCommerce V2 API
-	 * CORRECTED: Now includes both shipping tax fields.
+	 * CORRECTED: Now includes both subtotal and shipping tax fields.
 	 */
 	private function prepare_order_data($wc_order) {
 		$bc_customer_id = 0;
@@ -220,10 +220,11 @@ class WC_BC_Order_Processor {
 			'shipping_addresses' => $this->prepare_v2_shipping_addresses($wc_order),
 			'products' => $this->prepare_v2_order_products($wc_order),
 			'subtotal_ex_tax' => (float) $wc_order->get_subtotal(),
+			'subtotal_inc_tax' => (float) ($wc_order->get_subtotal() + $wc_order->get_total_tax() - $wc_order->get_shipping_tax()),
 			'total_ex_tax' => (float) ($wc_order->get_total() - $wc_order->get_total_tax()),
 			'total_inc_tax' => (float) $wc_order->get_total(),
 			'shipping_cost_ex_tax' => (float) $wc_order->get_shipping_total(),
-			'shipping_cost_inc_tax' => (float) ($wc_order->get_shipping_total() + $wc_order->get_shipping_tax()), // THIS LINE IS THE FIX
+			'shipping_cost_inc_tax' => (float) ($wc_order->get_shipping_total() + $wc_order->get_shipping_tax()),
 			'payment_method' => $wc_order->get_payment_method_title(),
 			'staff_notes' => $staff_notes,
 			'customer_message' => $wc_order->get_customer_note(),
@@ -233,12 +234,18 @@ class WC_BC_Order_Processor {
 
 	/**
 	 * Prepare V2 billing address
-	 * CORRECTED: Now safely handles invalid country codes.
+	 * CORRECTED: Now safely handles invalid country codes by throwing an exception.
 	 */
 	private function prepare_v2_billing_address($wc_order) {
 		$country_code = $wc_order->get_billing_country();
+		if ($country_code === 'UK') $country_code = 'GB'; // Common legacy code fix
+
 		$countries = WC()->countries->get_countries();
-		$country_name = $countries[$country_code] ?? $country_code; // Fallback to code if name not found
+		$country_name = $countries[strtoupper($country_code)] ?? '';
+
+		if (empty($country_name)) {
+			throw new Exception("Invalid or unrecognized billing country code '{$country_code}' for Order #" . $wc_order->get_id());
+		}
 
 		return array(
 			'first_name' => $wc_order->get_billing_first_name(),
@@ -258,7 +265,7 @@ class WC_BC_Order_Processor {
 
 	/**
 	 * Prepare V2 shipping addresses
-	 * CORRECTED: Now safely handles invalid country codes.
+	 * CORRECTED: Now safely handles invalid country codes by throwing an exception.
 	 */
 	private function prepare_v2_shipping_addresses($wc_order) {
 		if (!$wc_order->get_shipping_address_1()) {
@@ -269,8 +276,14 @@ class WC_BC_Order_Processor {
 		$shipping_method_name = !empty($shipping_methods) ? reset($shipping_methods)->get_method_title() : 'Migrated Shipping';
 
 		$country_code = $wc_order->get_shipping_country();
+		if ($country_code === 'UK') $country_code = 'GB';
+
 		$countries = WC()->countries->get_countries();
-		$country_name = $countries[$country_code] ?? $country_code;
+		$country_name = $countries[strtoupper($country_code)] ?? '';
+
+		if (empty($country_name)) {
+			throw new Exception("Invalid or unrecognized shipping country code '{$country_code}' for Order #" . $wc_order->get_id());
+		}
 
 		$shipping_address = array(
 			'first_name' => $wc_order->get_shipping_first_name(),
@@ -294,7 +307,6 @@ class WC_BC_Order_Processor {
 	 */
 	private function prepare_v2_order_products($wc_order) {
 		$products = array();
-
 		foreach ($wc_order->get_items() as $item_id => $item) {
 			$line_item = $this->get_v2_line_item($item);
 			if ($line_item) {
@@ -314,7 +326,6 @@ class WC_BC_Order_Processor {
 		}
 
 		error_log("Order #" . $item->get_order_id() . ": Falling back to custom product for item '" . $item->get_name() . "'. The original product may be deleted or unmapped.");
-
 		$product = $item->get_product();
 
 		if (!is_object($product)) {
@@ -362,7 +373,7 @@ class WC_BC_Order_Processor {
 			$wc_variation = wc_get_product($variation_id);
 			if ($wc_variation) {
 				$product_options = $this->get_v2_product_options_from_db($wc_variation, $bc_product_id);
-				if (empty($product_options)) return null;
+				if (empty($product_options) && count($wc_variation->get_attributes()) > 0) return null;
 			} else {
 				return null;
 			}

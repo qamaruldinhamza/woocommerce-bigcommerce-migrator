@@ -331,7 +331,8 @@ class WC_BC_Order_Processor {
 
 	/**
 	 * Attempts to build a line item from migrated product data.
-	 * CORRECTED: Now includes the historical price from the WC order.
+	 * FINAL VERSION: This logic is now BigCommerce-driven, checking for mandatory options first.
+	 * This correctly solves the "MandatoryProductOptions" error by reliably triggering the fallback.
 	 */
 	private function get_v2_mapped_product($item) {
 		global $wpdb;
@@ -340,48 +341,93 @@ class WC_BC_Order_Processor {
 		$product_id = $item->get_product_id();
 		$variation_id = $item->get_variation_id();
 
-		if (empty($product_id)) return null;
+		// We can only map products that exist and are variations.
+		if (empty($product_id) || empty($variation_id)) {
+			return null;
+		}
 
-		$bc_product_id = null;
-		$product_options = array();
+		$wc_variation = wc_get_product($variation_id);
+		$wc_attributes = is_object($wc_variation) ? $wc_variation->get_attributes() : array();
 
-		if ($variation_id) {
-			$mapping = $wpdb->get_row($wpdb->prepare(
-				"SELECT bc_product_id FROM $product_table WHERE wc_product_id = %d AND wc_variation_id = %d AND status = 'success'",
-				$product_id, $variation_id
-			));
-			if (!$mapping) return null;
+		// If there are no attributes on the WC side, we can't map options. Fallback.
+		if (empty($wc_attributes)) {
+			return null;
+		}
 
-			$bc_product_id = $mapping->bc_product_id;
-			$wc_variation = wc_get_product($variation_id);
-			if ($wc_variation) {
-				$product_options = $this->get_v2_product_options_from_db($wc_variation, $bc_product_id);
-				$wc_attributes_count = count($wc_variation->get_attributes());
-				if ($wc_attributes_count > 0 && empty($product_options)) {
-					return null; // Failed to match options, so fallback to custom product.
+		// Find the corresponding BigCommerce Product ID
+		$mapping = $wpdb->get_row($wpdb->prepare(
+			"SELECT bc_product_id FROM $product_table WHERE wc_product_id = %d AND wc_variation_id = %d AND status = 'success'",
+			$product_id, $variation_id
+		));
+		if (!$mapping) {
+			return null; // Product not mapped, fallback.
+		}
+		$bc_product_id = $mapping->bc_product_id;
+
+		// --- NEW ROBUST LOGIC ---
+
+		// 1. Fetch all options for the product directly from BigCommerce
+		$bc_options_response = $this->bc_api->get_product_options($bc_product_id);
+		if (!isset($bc_options_response['data'])) {
+			error_log("Order #" . $item->get_order_id() . ": Could not fetch options for BC Product #{$bc_product_id}. Falling back.");
+			return null; // Can't get options, so we must fallback.
+		}
+		$bc_options = $bc_options_response['data'];
+
+		// 2. Create a simple map of the WooCommerce attributes for easy lookup
+		$wc_attributes_map = array();
+		foreach ($wc_attributes as $taxonomy_slug => $value_slug) {
+			if (empty($value_slug)) continue;
+			$term = get_term_by('slug', $value_slug, 'pa_' . $taxonomy_slug);
+			if (!$term) continue;
+
+			$attribute_label = wc_attribute_label('pa_' . $taxonomy_slug);
+			$wc_attributes_map[strtolower(trim($attribute_label))] = $term->name;
+		}
+
+		$final_product_options = array();
+
+		// 3. Loop through BigCommerce's options and try to satisfy them from our WooCommerce data
+		foreach ($bc_options as $bc_option) {
+			$bc_option_name_lower = strtolower(trim($bc_option['display_name']));
+
+			// Check if this BC option exists in the WC product's attributes
+			if (isset($wc_attributes_map[$bc_option_name_lower])) {
+				$wc_value_name = $wc_attributes_map[$bc_option_name_lower];
+				$value_found = false;
+
+				// Find the matching value ID in BigCommerce's list of possible values for this option
+				foreach ($bc_option['option_values'] as $bc_option_value) {
+					if (strcasecmp(trim($bc_option_value['label']), trim($wc_value_name)) === 0) {
+						$final_product_options[] = array(
+							'product_option_id' => $bc_option['id'],
+							'value' => (string) $bc_option_value['id']
+						);
+						$value_found = true;
+						break; // Value found, move to next BC option
+					}
 				}
-			} else {
-				return null; // Variation product doesn't exist anymore, fallback.
+
+				// If a required option was present, but the specific value didn't match, this is a failure.
+				if (!$value_found && $bc_option['required']) {
+					error_log("Order #" . $item->get_order_id() . ": Mismatch for required option '{$bc_option['display_name']}'. WC value '{$wc_value_name}' not found in BC options. Falling back.");
+					return null;
+				}
+
+			} elseif ($bc_option['required']) {
+				// A required option in BigCommerce was not present at all in the WooCommerce product.
+				error_log("Order #" . $item->get_order_id() . ": Missing required BC option '{$bc_option['display_name']}' for WC Product #{$product_id}. Falling back.");
+				return null;
 			}
-		} else {
-			$bc_product_id = $wpdb->get_var($wpdb->prepare(
-				"SELECT bc_product_id FROM $product_table WHERE wc_product_id = %d AND wc_variation_id IS NULL AND status = 'success'",
-				$product_id
-			));
-			if (!$bc_product_id) return null;
 		}
 
 		$quantity = (int) $item->get_quantity();
-		if ($quantity === 0) {
-			return null; // Cannot process an item with zero quantity.
-		}
+		if ($quantity === 0) return null;
 
 		return array(
 			'product_id'      => (int) $bc_product_id,
 			'quantity'        => $quantity,
-			'product_options' => $product_options,
-			// --- THIS IS THE FIX ---
-			// Pass the exact historical price from the WooCommerce order item.
+			'product_options' => $final_product_options,
 			'price_ex_tax'    => (float) ($item->get_subtotal() / $quantity),
 			'price_inc_tax'   => (float) ($item->get_total() / $quantity),
 		);

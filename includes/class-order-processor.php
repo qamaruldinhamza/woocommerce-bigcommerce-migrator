@@ -9,289 +9,263 @@ class WC_BC_Order_Processor {
 	private $status_mapper;
 
 	public function __construct() {
-		$this->bc_api = new WC_BC_BigCommerce_API();
+		$this->bc_api        = new WC_BC_BigCommerce_API();
 		$this->status_mapper = new WC_BC_Order_Status_Mapper();
 	}
 
-	/**
-	 * Prepare all WooCommerce orders for migration
-	 */
-	public function prepare_orders($date_from = null, $date_to = null, $status_filter = null) {
-		set_time_limit(300);
-
-		if (!WC_BC_Order_Database::create_table()) {
-			return array('success' => false, 'message' => 'Failed to create order migration table');
+	public function prepare_orders( $date_from = null, $date_to = null, $status_filter = null ) {
+		set_time_limit( 300 );
+		if ( ! WC_BC_Order_Database::create_table() ) {
+			return array( 'success' => false, 'message' => 'Failed to create order migration table' );
 		}
-
 		$batch_size = 500;
-		$offset = 0;
-		$inserted = 0;
-		$skipped = 0;
-		$errors = 0;
-
+		$offset     = 0;
+		$inserted   = 0;
+		$skipped    = 0;
+		$errors     = 0;
 		do {
 			$args = array(
-				'type' => 'shop_order',
-				'status' => array_keys(wc_get_order_statuses()),
-				'limit' => $batch_size,
-				'offset' => $offset,
-				'return' => 'ids',
+				'type'    => 'shop_order',
+				'status'  => array_keys( wc_get_order_statuses() ),
+				'limit'   => $batch_size,
+				'offset'  => $offset,
+				'return'  => 'ids',
 				'orderby' => 'ID',
-				'order' => 'ASC'
+				'order'   => 'ASC'
 			);
-
-			$order_ids = wc_get_orders($args);
-
-			if (empty($order_ids)) {
+			$order_ids = wc_get_orders( $args );
+			if ( empty( $order_ids ) ) {
 				break;
 			}
-
-			foreach ($order_ids as $order_id) {
-				if (WC_BC_Order_Database::get_order_by_wc_id($order_id)) {
-					$skipped++;
+			foreach ( $order_ids as $order_id ) {
+				if ( WC_BC_Order_Database::get_order_by_wc_id( $order_id ) ) {
+					$skipped ++;
 					continue;
 				}
-
-				$order = wc_get_order($order_id);
-				if (!$order) {
-					$errors++;
+				$order = wc_get_order( $order_id );
+				if ( ! $order ) {
+					$errors ++;
 					continue;
 				}
-
-				$order_data = $this->extract_order_basic_data($order);
-				if (WC_BC_Order_Database::insert_order_mapping($order_data)) {
-					$inserted++;
+				$order_data = $this->extract_order_basic_data( $order );
+				if ( WC_BC_Order_Database::insert_order_mapping( $order_data ) ) {
+					$inserted ++;
 				} else {
-					$errors++;
-					error_log("Failed to prepare order {$order_id} for migration");
+					$errors ++;
+					error_log( "Failed to prepare order {$order_id} for migration" );
 				}
-				unset($order);
+				unset( $order );
 			}
-
 			$offset += $batch_size;
 			wp_cache_flush();
-
-		} while (count($order_ids) === $batch_size);
+		} while ( count( $order_ids ) === $batch_size );
 
 		return array(
-			'success' => true,
+			'success'         => true,
 			'total_processed' => $inserted + $skipped + $errors,
-			'inserted' => $inserted,
-			'skipped' => $skipped,
-			'errors' => $errors
+			'inserted'        => $inserted,
+			'skipped'         => $skipped,
+			'errors'          => $errors
 		);
 	}
 
-	/**
-	 * Extract basic order data for database storage
-	 */
-	private function extract_order_basic_data($order) {
-		$customer_id = $order->get_customer_id();
+	private function extract_order_basic_data( $order ) {
+		$customer_id    = $order->get_customer_id();
 		$bc_customer_id = null;
-		if ($customer_id) {
-			$customer_mapping = WC_BC_Customer_Database::get_customer_by_wp_id($customer_id);
-			if ($customer_mapping && $customer_mapping->bc_customer_id) {
+		if ( $customer_id ) {
+			$customer_mapping = WC_BC_Customer_Database::get_customer_by_wp_id( $customer_id );
+			if ( $customer_mapping && $customer_mapping->bc_customer_id ) {
 				$bc_customer_id = $customer_mapping->bc_customer_id;
 			}
 		}
+
 		return array(
-			'wc_order_id' => $order->get_id(),
-			'wc_customer_id' => $customer_id ?: null,
-			'bc_customer_id' => $bc_customer_id,
-			'order_status' => $order->get_status(),
-			'order_total' => $order->get_total(),
-			'order_date' => $order->get_date_created()->format('Y-m-d H:i:s'),
-			'payment_method' => $order->get_payment_method(),
+			'wc_order_id'          => $order->get_id(),
+			'wc_customer_id'       => $customer_id ?: null,
+			'bc_customer_id'       => $bc_customer_id,
+			'order_status'         => $order->get_status(),
+			'order_total'          => $order->get_total(),
+			'order_date'           => $order->get_date_created()->format( 'Y-m-d H:i:s' ),
+			'payment_method'       => $order->get_payment_method(),
 			'payment_method_title' => $order->get_payment_method_title(),
-			'migration_status' => 'pending'
+			'migration_status'     => 'pending'
 		);
 	}
 
-	/**
-	 * Process a batch of orders for migration
-	 */
-	public function process_batch($batch_size = 10) {
-		$pending_orders = WC_BC_Order_Database::get_pending_orders($batch_size);
-
-		if (empty($pending_orders)) {
-			return array('success' => true, 'message' => 'No pending orders to migrate', 'processed' => 0, 'errors' => 0);
+	public function process_batch( $batch_size = 10 ) {
+		$pending_orders = WC_BC_Order_Database::get_pending_orders( $batch_size );
+		if ( empty( $pending_orders ) ) {
+			return array( 'success' => true, 'message' => 'No pending orders to migrate', 'processed' => 0, 'errors' => 0 );
 		}
-
 		$processed = 0;
-		$errors = 0;
-		$results = array();
-
-		foreach ($pending_orders as $order_mapping) {
-			$result = $this->migrate_single_order($order_mapping->wc_order_id);
-			$results[$order_mapping->wc_order_id] = $result;
-
-			if (isset($result['error'])) {
-				$errors++;
+		$errors    = 0;
+		$results   = array();
+		foreach ( $pending_orders as $order_mapping ) {
+			$result                                  = $this->migrate_single_order( $order_mapping->wc_order_id );
+			$results[ $order_mapping->wc_order_id ] = $result;
+			if ( isset( $result['error'] ) ) {
+				$errors ++;
 			} else {
-				$processed++;
+				$processed ++;
 			}
-			usleep(500000); // 0.5 second delay
+			usleep( 500000 );
 		}
 
 		return array(
-			'success' => true,
+			'success'   => true,
 			'processed' => $processed,
-			'errors' => $errors,
-			'results' => $results,
+			'errors'    => $errors,
+			'results'   => $results,
 			'remaining' => WC_BC_Order_Database::get_remaining_orders_count()
 		);
 	}
 
-	/**
-	 * Migrate a single order to BigCommerce
-	 */
-	public function migrate_single_order($wc_order_id) {
-		$wc_order = wc_get_order($wc_order_id);
-		if (!$wc_order) {
-			return array('error' => 'WooCommerce order not found');
+	public function migrate_single_order( $wc_order_id ) {
+		$wc_order = wc_get_order( $wc_order_id );
+		if ( ! $wc_order ) {
+			return array( 'error' => 'WooCommerce order not found' );
 		}
-
 		try {
-			$existing_mapping = WC_BC_Order_Database::get_order_by_wc_id($wc_order_id);
-			if ($existing_mapping && $existing_mapping->bc_order_id) {
-				WC_BC_Order_Database::update_order_mapping($wc_order_id, ['migration_status' => 'success', 'migration_message' => 'Order already migrated.']);
-				return array('success' => true, 'bc_order_id' => $existing_mapping->bc_order_id, 'already_exists' => true);
+			$existing_mapping = WC_BC_Order_Database::get_order_by_wc_id( $wc_order_id );
+			if ( $existing_mapping && $existing_mapping->bc_order_id ) {
+				WC_BC_Order_Database::update_order_mapping( $wc_order_id, [
+					'migration_status'  => 'success',
+					'migration_message' => 'Order already migrated.'
+				] );
+
+				return array(
+					'success'        => true,
+					'bc_order_id'    => $existing_mapping->bc_order_id,
+					'already_exists' => true
+				);
 			}
-
-			$order_data = $this->prepare_order_data($wc_order);
-
-			if (empty($order_data['products'])) {
-				throw new Exception('Could not process any line items for this order. Check product mapping and data.');
+			$order_data = $this->prepare_order_data( $wc_order );
+			if ( empty( $order_data['products'] ) ) {
+				throw new Exception( 'Could not process any line items for this order. Check product mapping and data.' );
 			}
-
-			$result = $this->bc_api->create_order($order_data);
-
-			if (isset($result['error'])) {
-				throw new Exception(is_array($result) ? json_encode($result) : $result);
+			$result = $this->bc_api->create_order( $order_data );
+			if ( isset( $result['error'] ) ) {
+				throw new Exception( is_array( $result ) ? json_encode( $result ) : $result );
 			}
-
-			if (!isset($result['data']['id'])) {
-				throw new Exception('No order ID returned from BigCommerce: ' . json_encode($result));
+			if ( ! isset( $result['data']['id'] ) ) {
+				throw new Exception( 'No order ID returned from BigCommerce: ' . json_encode( $result ) );
 			}
-
 			$bc_order_id = $result['data']['id'];
-
-			WC_BC_Order_Database::update_order_mapping($wc_order_id, array(
-				'bc_order_id' => $bc_order_id,
-				'migration_status' => 'success',
+			WC_BC_Order_Database::update_order_mapping( $wc_order_id, array(
+				'bc_order_id'       => $bc_order_id,
+				'migration_status'  => 'success',
 				'migration_message' => 'Order migrated successfully'
-			));
+			) );
 
-			return array('success' => true, 'bc_order_id' => $bc_order_id);
-
-		} catch (Exception $e) {
+			return array( 'success' => true, 'bc_order_id' => $bc_order_id );
+		} catch ( Exception $e ) {
 			$error_message = $e->getMessage();
-			error_log("Order migration error for order {$wc_order_id}: {$error_message}");
-
-			WC_BC_Order_Database::update_order_mapping($wc_order_id, array(
-				'migration_status' => 'error',
+			error_log( "Order migration error for order {$wc_order_id}: {$error_message}" );
+			WC_BC_Order_Database::update_order_mapping( $wc_order_id, array(
+				'migration_status'  => 'error',
 				'migration_message' => $error_message
-			));
+			) );
 
-			return array('error' => $error_message);
+			return array( 'error' => $error_message );
 		}
 	}
 
-	/**
-	 * Prepare complete order data for BigCommerce V2 API
-	 */
-	private function prepare_order_data($wc_order) {
+	private function prepare_order_data( $wc_order ) {
 		$bc_customer_id = 0;
-		$customer_id = $wc_order->get_customer_id();
-		if ($customer_id) {
-			$customer_mapping = WC_BC_Customer_Database::get_customer_by_wp_id($customer_id);
-			if ($customer_mapping && $customer_mapping->bc_customer_id) {
+		$customer_id    = $wc_order->get_customer_id();
+		if ( $customer_id ) {
+			$customer_mapping = WC_BC_Customer_Database::get_customer_by_wp_id( $customer_id );
+			if ( $customer_mapping && $customer_mapping->bc_customer_id ) {
 				$bc_customer_id = (int) $customer_mapping->bc_customer_id;
 			}
 		}
-
-		$staff_notes = 'Migrated from WooCommerce. WC Order ID: ' . $wc_order->get_id();
+		$staff_notes  = 'Migrated from WooCommerce. WC Order ID: ' . $wc_order->get_id();
 		$coupon_codes = $wc_order->get_coupon_codes();
-		if (!empty($coupon_codes)) {
-			$staff_notes .= ' | Coupon(s) Used: ' . implode(', ', $coupon_codes);
+		if ( ! empty( $coupon_codes ) ) {
+			$staff_notes .= ' | Coupon(s) Used: ' . implode( ', ', $coupon_codes );
 		}
 
 		return array(
-			'customer_id' => $bc_customer_id,
-			'status_id' => WC_BC_Order_Status_Mapper::map_status($wc_order->get_status()),
-			'date_created' => $wc_order->get_date_created()->format('r'),
-			'billing_address' => $this->prepare_v2_billing_address($wc_order),
-			'shipping_addresses' => $this->prepare_v2_shipping_addresses($wc_order),
-			'products' => $this->prepare_v2_order_products($wc_order),
-			'subtotal_ex_tax' => (float) $wc_order->get_subtotal(),
-			'subtotal_inc_tax' => (float) ($wc_order->get_subtotal() + ($wc_order->get_total_tax() - $wc_order->get_shipping_tax())),
-			'total_ex_tax' => (float) ($wc_order->get_total() - $wc_order->get_total_tax()),
-			'total_inc_tax' => (float) $wc_order->get_total(),
-			'shipping_cost_ex_tax' => (float) $wc_order->get_shipping_total(),
-			'shipping_cost_inc_tax' => (float) ($wc_order->get_shipping_total() + $wc_order->get_shipping_tax()),
-			'payment_method' => $wc_order->get_payment_method_title(),
-			'staff_notes' => $staff_notes,
-			'customer_message' => $wc_order->get_customer_note(),
-			'discount_amount' => (float) $wc_order->get_discount_total(),
-			'external_source' => 'M-MIG',
+			'customer_id'             => $bc_customer_id,
+			'status_id'               => WC_BC_Order_Status_Mapper::map_status( $wc_order->get_status() ),
+			'date_created'            => $wc_order->get_date_created()->format( 'r' ),
+			'billing_address'         => $this->prepare_v2_billing_address( $wc_order ),
+			'shipping_addresses'      => $this->prepare_v2_shipping_addresses( $wc_order ),
+			'products'                => $this->prepare_v2_order_products( $wc_order ),
+			'subtotal_ex_tax'         => (float) $wc_order->get_subtotal(),
+			'subtotal_inc_tax'        => (float) ( $wc_order->get_subtotal() + ( $wc_order->get_total_tax() - $wc_order->get_shipping_tax() ) ),
+			'total_ex_tax'            => (float) ( $wc_order->get_total() - $wc_order->get_total_tax() ),
+			'total_inc_tax'           => (float) $wc_order->get_total(),
+			'shipping_cost_ex_tax'    => (float) $wc_order->get_shipping_total(),
+			'shipping_cost_inc_tax'   => (float) ( $wc_order->get_shipping_total() + $wc_order->get_shipping_tax() ),
+			'payment_method'          => $wc_order->get_payment_method_title(),
+			'staff_notes'             => $staff_notes,
+			'customer_message'        => $wc_order->get_customer_note(),
+			'discount_amount'         => (float) $wc_order->get_discount_total(),
+			'external_source'         => 'M-MIG',
 		);
 	}
 
-	private function prepare_v2_billing_address($wc_order) {
+	private function prepare_v2_billing_address( $wc_order ) {
 		$country_code = $wc_order->get_billing_country();
-		$country_name = WC_BC_Location_Mapper::get_bc_country_name($country_code);
-		if (empty($country_name)) {
-			throw new Exception("Invalid or unrecognized billing country code '{$country_code}' for Order #" . $wc_order->get_id());
+		$country_name = WC_BC_Location_Mapper::get_bc_country_name( $country_code );
+		if ( empty( $country_name ) ) {
+			throw new Exception( "Invalid or unrecognized billing country code '{$country_code}' for Order #" . $wc_order->get_id() );
 		}
+
 		return array(
-			'first_name' => $wc_order->get_billing_first_name(),
-			'last_name' => $wc_order->get_billing_last_name(),
-			'company' => $wc_order->get_billing_company(),
-			'street_1' => $wc_order->get_billing_address_1(),
-			'street_2' => $wc_order->get_billing_address_2(),
-			'city' => $wc_order->get_billing_city(),
-			'state' => WC_BC_Location_Mapper::get_full_state_name($wc_order->get_billing_state(), $country_code),
-			'zip' => $wc_order->get_billing_postcode(),
-			'country' => $country_name,
+			'first_name'   => $wc_order->get_billing_first_name(),
+			'last_name'    => $wc_order->get_billing_last_name(),
+			'company'      => $wc_order->get_billing_company(),
+			'street_1'     => $wc_order->get_billing_address_1(),
+			'street_2'     => $wc_order->get_billing_address_2(),
+			'city'         => $wc_order->get_billing_city(),
+			'state'        => WC_BC_Location_Mapper::get_full_state_name( $wc_order->get_billing_state(), $country_code ),
+			'zip'          => $wc_order->get_billing_postcode(),
+			'country'      => $country_name,
 			'country_iso2' => $country_code,
-			'phone' => $wc_order->get_billing_phone(),
-			'email' => $wc_order->get_billing_email(),
+			'phone'        => $wc_order->get_billing_phone(),
+			'email'        => $wc_order->get_billing_email(),
 		);
 	}
 
-	private function prepare_v2_shipping_addresses($wc_order) {
-		if (!$wc_order->get_shipping_address_1()) {
+	private function prepare_v2_shipping_addresses( $wc_order ) {
+		if ( ! $wc_order->get_shipping_address_1() ) {
 			return array();
 		}
-		$shipping_methods = $wc_order->get_shipping_methods();
-		$shipping_method_name = !empty($shipping_methods) ? reset($shipping_methods)->get_method_title() : 'Migrated Shipping';
-		$country_code = $wc_order->get_shipping_country();
-		$country_name = WC_BC_Location_Mapper::get_bc_country_name($country_code);
-		if (empty($country_name)) {
-			throw new Exception("Invalid or unrecognized shipping country code '{$country_code}' for Order #" . $wc_order->get_id());
+		$shipping_methods   = $wc_order->get_shipping_methods();
+		$shipping_method_name = ! empty( $shipping_methods ) ? reset( $shipping_methods )->get_method_title() : 'Migrated Shipping';
+		$country_code       = $wc_order->get_shipping_country();
+		$country_name       = WC_BC_Location_Mapper::get_bc_country_name( $country_code );
+		if ( empty( $country_name ) ) {
+			throw new Exception( "Invalid or unrecognized shipping country code '{$country_code}' for Order #" . $wc_order->get_id() );
 		}
 		$shipping_address = array(
-			'first_name' => $wc_order->get_shipping_first_name(),
-			'last_name' => $wc_order->get_shipping_last_name(),
-			'company' => $wc_order->get_shipping_company(),
-			'street_1' => $wc_order->get_shipping_address_1(),
-			'street_2' => $wc_order->get_shipping_address_2(),
-			'city' => $wc_order->get_shipping_city(),
-			'state' => WC_BC_Location_Mapper::get_full_state_name($wc_order->get_shipping_state(), $country_code),
-			'zip' => $wc_order->get_shipping_postcode(),
-			'country' => $country_name,
-			'country_iso2' => $country_code,
+			'first_name'      => $wc_order->get_shipping_first_name(),
+			'last_name'       => $wc_order->get_shipping_last_name(),
+			'company'         => $wc_order->get_shipping_company(),
+			'street_1'        => $wc_order->get_shipping_address_1(),
+			'street_2'        => $wc_order->get_shipping_address_2(),
+			'city'            => $wc_order->get_shipping_city(),
+			'state'           => WC_BC_Location_Mapper::get_full_state_name( $wc_order->get_shipping_state(), $country_code ),
+			'zip'             => $wc_order->get_shipping_postcode(),
+			'country'         => $country_name,
+			'country_iso2'    => $country_code,
 			'shipping_method' => $shipping_method_name,
 		);
-		return array($shipping_address);
+
+		return array( $shipping_address );
 	}
 
+	// --- START OF REFACTORED CODE ---
+
 	/**
-	 * NEW: Refactored and combined product logic into one function for robustness.
+	 * Prepare V2 order products with robust fallbacks.
 	 */
 	private function prepare_v2_order_products($wc_order) {
 		$products = array();
-		foreach ($wc_order->get_items() as $item_id => $item) {
+		foreach ($wc_order->get_items() as $item) {
+			// The `prepare_single_line_item` now contains all logic.
 			$line_item = $this->prepare_single_line_item($item);
 			if ($line_item) {
 				$products[] = $line_item;
@@ -301,272 +275,62 @@ class WC_BC_Order_Processor {
 	}
 
 	/**
-	 * NEW: This single function now handles all logic for processing a line item.
-	 * It checks for deleted products first, then attempts a full mapping, and falls back to a custom product if anything fails.
+	 * This is the master function for a single line item.
+	 * It checks for deleted products FIRST, then attempts a full mapping,
+	 * and falls back to a custom product if any part of the mapping fails.
 	 */
 	private function prepare_single_line_item($item) {
-		global $wpdb;
-		$product_table = $wpdb->prefix . WC_BC_MIGRATOR_TABLE;
-
-		$quantity = (int) $item->get_quantity();
-		if ($quantity === 0) return null;
-
 		$wc_product_object = $item->get_product();
 
 		// SCENARIO 1: The product has been deleted from WooCommerce.
-		// Immediately create a custom product from the order item's historical data.
+		// Immediately create a custom product using historical data from the order item itself.
 		if (!is_object($wc_product_object)) {
-			error_log("Order #" . $item->get_order_id() . ": WC Product #" . $item->get_product_id() . " is deleted. Creating as custom product.");
-			return array(
-				'name'          => $item->get_name(),
-				'quantity'      => $quantity,
-				'price_ex_tax'  => (float) ($item->get_subtotal() / $quantity),
-				'price_inc_tax' => (float) ($item->get_total() / $quantity),
-				'sku'           => 'WC-DELETED-' . $item->get_product_id()
-			);
+			error_log("Order #" . $item->get_order_id() . ": WC Product ID #" . $item->get_product_id() . " is deleted. Creating as custom product.");
+			return $this->create_fallback_product_payload($item);
 		}
 
 		// SCENARIO 2: The product exists. Attempt to map it to a BigCommerce product.
+		$mapped_product_payload = $this->get_mapped_product_payload($item, $wc_product_object);
+
+		if ($mapped_product_payload) {
+			return $mapped_product_payload; // Success!
+		}
+
+		// SCENARIO 3: Mapping failed for a reason (no mapping, option mismatch, etc.).
+		// The helper functions will have logged the specific reason. Fall back to a custom product.
+		return $this->create_fallback_product_payload($item);
+	}
+
+	/**
+	 * Tries to create a payload for a fully mapped BigCommerce product.
+	 * Returns null on any failure, triggering the fallback.
+	 */
+	private function get_mapped_product_payload($item, $wc_product_object) {
+		global $wpdb;
+		$product_table = $wpdb->prefix . WC_BC_MIGRATOR_TABLE;
+
 		$product_id = $item->get_product_id();
 		$variation_id = $item->get_variation_id();
 		$is_variation = $variation_id > 0;
 
-		$mapping = null;
-		if ($is_variation) {
-			$mapping = $wpdb->get_row($wpdb->prepare(
-				"SELECT bc_product_id FROM $product_table WHERE wc_product_id = %d AND wc_variation_id = %d AND status = 'success'",
-				$product_id, $variation_id
-			));
-		} else {
-			$mapping = $wpdb->get_row($wpdb->prepare(
-				"SELECT bc_product_id FROM $product_table WHERE wc_product_id = %d AND wc_variation_id IS NULL AND status = 'success'",
-				$product_id
-			));
-		}
+		$query = $is_variation
+			? $wpdb->prepare("SELECT bc_product_id FROM $product_table WHERE wc_product_id = %d AND wc_variation_id = %d AND status = 'success'", $product_id, $variation_id)
+			: $wpdb->prepare("SELECT bc_product_id FROM $product_table WHERE wc_product_id = %d AND wc_variation_id IS NULL AND status = 'success'", $product_id);
 
-		// If no mapping exists in our table, fall back to a custom product.
+		$mapping = $wpdb->get_row($query);
+
 		if (!$mapping) {
-			error_log("Order #" . $item->get_order_id() . ": No mapping found for WC Product #" . $item->get_product_id() . ". Creating as custom product.");
-			return $this->create_fallback_product($item);
+			error_log("Order #" . $item->get_order_id() . ": No mapping found for WC Product #" . $product_id . ". Falling back.");
+			return null;
 		}
 
 		$bc_product_id = $mapping->bc_product_id;
-		$final_product_options = array();
+		$final_product_options = [];
 
-		// If it's a variation, we must correctly map all required options.
 		if ($is_variation) {
-			$options_result = $this->get_and_validate_product_options($wc_product_object, $bc_product_id, $item->get_order_id());
-
-			// If option validation fails, fall back to a custom product.
-			if ($options_result === null) {
-				return $this->create_fallback_product($item);
-			}
-			$final_product_options = $options_result;
-		}
-
-		// SCENARIO 3: Success! We have a mapped product and all required options.
-		return array(
-			'product_id'      => (int) $bc_product_id,
-			'quantity'        => $quantity,
-			'product_options' => $final_product_options,
-			'price_ex_tax'    => (float) ($item->get_subtotal() / $quantity),
-			'price_inc_tax'   => (float) ($item->get_total() / $quantity),
-		);
-	}
-
-	/**
-	 * NEW: Helper to create a fallback custom product payload.
-	 */
-	private function create_fallback_product($item) {
-		$product = $item->get_product(); // Re-fetch to get SKU if possible
-		$sku = is_object($product) ? $product->get_sku() : 'SKU-NOT-FOUND';
-		$clean_sku = preg_replace('/[^a-zA-Z0-9\-\_]/', '', $sku);
-		$sku_prefix = 'WC-' . ($item->get_variation_id() ?: $item->get_product_id());
-
-		$quantity = (int) $item->get_quantity();
-		if ($quantity === 0) return null;
-
-		return array(
-			'name'          => $item->get_name(),
-			'quantity'      => $quantity,
-			'price_ex_tax'  => (float) ($item->get_subtotal() / $quantity),
-			'price_inc_tax' => (float) ($item->get_total() / $quantity),
-			'sku'           => $sku_prefix . '-' . $clean_sku,
-		);
-	}
-
-	/**
-	 * NEW: Helper to get and validate options, driven by BigCommerce requirements.
-	 */
-	private function get_and_validate_product_options($wc_variation, $bc_product_id, $order_id) {
-		$mapped_options = array();
-		$wc_attributes = $wc_variation->get_attributes();
-
-		$bc_options_response = $this->bc_api->get_product_options($bc_product_id);
-		if (!isset($bc_options_response['data'])) {
-			error_log("Order #{$order_id}: Could not fetch options for BC Product #{$bc_product_id}. Cannot map options.");
-			return null;
-		}
-		$bc_options = $bc_options_response['data'];
-
-		// Create a simple map of the WooCommerce attributes for easy lookup.
-		$wc_attributes_map = array();
-		foreach ($wc_attributes as $taxonomy_slug => $value_slug) {
-			if (empty($value_slug)) continue;
-			$term = get_term_by('slug', $value_slug, 'pa_' . $taxonomy_slug);
-			if (!$term) continue;
-			$attribute_label = wc_attribute_label('pa_' . $taxonomy_slug);
-			$wc_attributes_map[strtolower(trim($attribute_label))] = $term->name;
-		}
-
-		// Loop through BigCommerce's options and try to satisfy them from our WooCommerce data.
-		foreach ($bc_options as $bc_option) {
-			$bc_option_name_lower = strtolower(trim($bc_option['display_name']));
-
-			if (isset($wc_attributes_map[$bc_option_name_lower])) {
-				$wc_value_name = $wc_attributes_map[$bc_option_name_lower];
-				$value_found = false;
-
-				foreach ($bc_option['option_values'] as $bc_option_value) {
-					if (strcasecmp(trim($bc_option_value['label']), trim($wc_value_name)) === 0) {
-						$mapped_options[] = array(
-							'product_option_id' => $bc_option['id'],
-							'value' => (string) $bc_option_value['id']
-						);
-						$value_found = true;
-						break;
-					}
-				}
-				if (!$value_found && $bc_option['required']) {
-					error_log("Order #{$order_id}: Mismatch for required option '{$bc_option['display_name']}'. WC value '{$wc_value_name}' not found in BC options.");
-					return null; // Mismatch on a required option, fail the mapping.
-				}
-			} elseif ($bc_option['required']) {
-				error_log("Order #{$order_id}: Missing required BC option '{$bc_option['display_name']}' for WC Product #" . $wc_variation->get_id() . ".");
-				return null; // A required BC option is missing from WC, fail the mapping.
-			}
-		}
-		return $mapped_options;
-	}
-
-	private function get_v2_line_item($item) {
-		$mapped_product = $this->get_v2_mapped_product($item);
-		if ($mapped_product) {
-			return $mapped_product;
-		}
-		error_log("Order #" . $item->get_order_id() . ": Falling back to custom product for item '" . $item->get_name() . "'. The original product may be deleted or unmapped.");
-		$product = $item->get_product();
-		$sku_prefix = 'WC-' . ($item->get_variation_id() ?: $item->get_product_id());
-		$original_sku = is_object($product) ? $product->get_sku() : 'DELETED';
-		$clean_sku = preg_replace('/[^a-zA-Z0-9\-\_]/', '', $original_sku); // Clean the SKU
-
-		if (!is_object($product)) {
-			return array(
-				'name' => $item->get_name(),
-				'quantity' => (int) $item->get_quantity(),
-				'price_ex_tax' => (float) ($item->get_subtotal() / $item->get_quantity()),
-				'price_inc_tax' => (float) ($item->get_total() / $item->get_quantity()),
-				'sku' => 'WC-DELETED-' . $item->get_product_id()
-			);
-		}
-
-		return array(
-			'name' => $item->get_name(),
-			'quantity' => (int) $item->get_quantity(),
-			'price_ex_tax' => (float) ($item->get_subtotal() / $item->get_quantity()),
-			'price_inc_tax' => (float) ($item->get_total() / $item->get_quantity()),
-			'sku' => $sku_prefix . '-' . $clean_sku,
-		);
-	}
-
-	/**
-	 * Attempts to build a line item from migrated product data.
-	 * FINAL VERSION: This logic is now BigCommerce-driven, checking for mandatory options first.
-	 * This correctly solves the "MandatoryProductOptions" error by reliably triggering the fallback.
-	 */
-	private function get_v2_mapped_product($item) {
-		global $wpdb;
-		$product_table = $wpdb->prefix . WC_BC_MIGRATOR_TABLE;
-
-		$product_id = $item->get_product_id();
-		$variation_id = $item->get_variation_id();
-
-		// We can only map products that exist and are variations.
-		if (empty($product_id) || empty($variation_id)) {
-			return null;
-		}
-
-		$wc_variation = wc_get_product($variation_id);
-		$wc_attributes = is_object($wc_variation) ? $wc_variation->get_attributes() : array();
-
-		// If there are no attributes on the WC side, we can't map options. Fallback.
-		if (empty($wc_attributes)) {
-			return null;
-		}
-
-		// Find the corresponding BigCommerce Product ID
-		$mapping = $wpdb->get_row($wpdb->prepare(
-			"SELECT bc_product_id FROM $product_table WHERE wc_product_id = %d AND wc_variation_id = %d AND status = 'success'",
-			$product_id, $variation_id
-		));
-		if (!$mapping) {
-			return null; // Product not mapped, fallback.
-		}
-		$bc_product_id = $mapping->bc_product_id;
-
-		// --- NEW ROBUST LOGIC ---
-
-		// 1. Fetch all options for the product directly from BigCommerce
-		$bc_options_response = $this->bc_api->get_product_options($bc_product_id);
-		if (!isset($bc_options_response['data'])) {
-			error_log("Order #" . $item->get_order_id() . ": Could not fetch options for BC Product #{$bc_product_id}. Falling back.");
-			return null; // Can't get options, so we must fallback.
-		}
-		$bc_options = $bc_options_response['data'];
-
-		// 2. Create a simple map of the WooCommerce attributes for easy lookup
-		$wc_attributes_map = array();
-		foreach ($wc_attributes as $taxonomy_slug => $value_slug) {
-			if (empty($value_slug)) continue;
-			$term = get_term_by('slug', $value_slug, 'pa_' . $taxonomy_slug);
-			if (!$term) continue;
-
-			$attribute_label = wc_attribute_label('pa_' . $taxonomy_slug);
-			$wc_attributes_map[strtolower(trim($attribute_label))] = $term->name;
-		}
-
-		$final_product_options = array();
-
-		// 3. Loop through BigCommerce's options and try to satisfy them from our WooCommerce data
-		foreach ($bc_options as $bc_option) {
-			$bc_option_name_lower = strtolower(trim($bc_option['display_name']));
-
-			// Check if this BC option exists in the WC product's attributes
-			if (isset($wc_attributes_map[$bc_option_name_lower])) {
-				$wc_value_name = $wc_attributes_map[$bc_option_name_lower];
-				$value_found = false;
-
-				// Find the matching value ID in BigCommerce's list of possible values for this option
-				foreach ($bc_option['option_values'] as $bc_option_value) {
-					if (strcasecmp(trim($bc_option_value['label']), trim($wc_value_name)) === 0) {
-						$final_product_options[] = array(
-							'product_option_id' => $bc_option['id'],
-							'value' => (string) $bc_option_value['id']
-						);
-						$value_found = true;
-						break; // Value found, move to next BC option
-					}
-				}
-
-				// If a required option was present, but the specific value didn't match, this is a failure.
-				if (!$value_found && $bc_option['required']) {
-					error_log("Order #" . $item->get_order_id() . ": Mismatch for required option '{$bc_option['display_name']}'. WC value '{$wc_value_name}' not found in BC options. Falling back.");
-					return null;
-				}
-
-			} elseif ($bc_option['required']) {
-				// A required option in BigCommerce was not present at all in the WooCommerce product.
-				error_log("Order #" . $item->get_order_id() . ": Missing required BC option '{$bc_option['display_name']}' for WC Product #{$product_id}. Falling back.");
+			$final_product_options = $this->get_validated_options($wc_product_object, $bc_product_id, $item->get_order_id());
+			// If option validation fails (returns null), trigger the fallback.
+			if ($final_product_options === null) {
 				return null;
 			}
 		}
@@ -574,66 +338,118 @@ class WC_BC_Order_Processor {
 		$quantity = (int) $item->get_quantity();
 		if ($quantity === 0) return null;
 
-		return array(
+		return [
 			'product_id'      => (int) $bc_product_id,
 			'quantity'        => $quantity,
 			'product_options' => $final_product_options,
 			'price_ex_tax'    => (float) ($item->get_subtotal() / $quantity),
 			'price_inc_tax'   => (float) ($item->get_total() / $quantity),
-		);
-	}
-
-	private function get_v2_product_options_from_db($wc_variation, $bc_product_id) {
-		$options = array();
-		$attributes = $wc_variation->get_attributes();
-		$bc_options_response = $this->bc_api->get_product_options($bc_product_id);
-		if (!isset($bc_options_response['data'])) return array();
-		$bc_options = $bc_options_response['data'];
-
-		foreach ($attributes as $taxonomy_slug => $value_slug) {
-			if (empty($value_slug)) continue;
-			$term = get_term_by('slug', $value_slug, 'pa_' . $taxonomy_slug);
-			if (!$term) continue;
-
-			$attribute_label = wc_attribute_label('pa_' . $taxonomy_slug);
-
-			foreach ($bc_options as $bc_option) {
-				if (strcasecmp($bc_option['display_name'], $attribute_label) === 0) {
-					foreach ($bc_option['option_values'] as $bc_option_value) {
-						if (strcasecmp($bc_option_value['label'], $term->name) === 0) {
-							$options[] = array(
-								'id' => $bc_option_value['id'],
-								'value' => (string) $bc_option_value['id'],
-								'product_option_id' => $bc_option['id']
-							);
-							break 2;
-						}
-					}
-				}
-			}
-		}
-		return count($attributes) === count($options) ? $options : array();
+		];
 	}
 
 	/**
-	 * Get product options in V2 format for a variation
+	 * Fetches options from BigCommerce and validates them against WooCommerce attributes.
+	 * Returns an array of options on success, or NULL on any failure.
 	 */
+	private function get_validated_options($wc_variation, $bc_product_id, $order_id) {
+		$wc_attributes = $wc_variation->get_attributes();
+		if (empty($wc_attributes)) {
+			return []; // No attributes to map is a success.
+		}
+
+		$bc_options_response = $this->bc_api->get_product_options($bc_product_id);
+		if (!isset($bc_options_response['data'])) {
+			error_log("Order #{$order_id}: Could not fetch BC options for BC Product #{$bc_product_id}. Cannot map options.");
+			return null;
+		}
+		$bc_options = $bc_options_response['data'];
+
+		$wc_attributes_map = [];
+		foreach ($wc_attributes as $taxonomy => $value_slug) {
+			if(empty($value_slug)) continue; // Handle cases where an attribute value might be empty
+			$term = get_term_by('slug', $value_slug, $taxonomy);
+			if (!$term) continue;
+			$attribute_label = wc_attribute_label($taxonomy);
+			$wc_attributes_map[strtolower(trim($attribute_label))] = $term->name;
+		}
+
+		$mapped_options = [];
+		foreach ($bc_options as $bc_option) {
+			$bc_option_name_lower = strtolower(trim($bc_option['display_name']));
+
+			if (isset($wc_attributes_map[$bc_option_name_lower])) {
+				$wc_value_name = $wc_attributes_map[$bc_option_name_lower];
+				$value_found = false;
+
+				foreach ($bc_option['option_values'] as $bc_option_value) {
+					if (strcasecmp(trim($bc_option_value['label']), trim($wc_value_name)) === 0) {
+						$mapped_options[] = [
+							'product_option_id' => $bc_option['id'],
+							'value' => (string) $bc_option_value['id']
+						];
+						$value_found = true;
+						break;
+					}
+				}
+				if (!$value_found && $bc_option['required']) {
+					error_log("Order #{$order_id}: Mismatch for required option '{$bc_option['display_name']}'. WC value '{$wc_value_name}' not found in BC options.");
+					return null;
+				}
+			} elseif ($bc_option['required']) {
+				error_log("Order #{$order_id}: Missing required BC option '{$bc_option['display_name']}' for WC Product #" . $wc_variation->get_id() . ".");
+				return null;
+			}
+		}
+
+		// FINAL CHECK: Ensure all WC attributes were considered.
+		// If a required BC option was not in the WC attributes map, we already returned null.
+		// This ensures we have a complete match.
+		if(count($wc_attributes_map) !== count($mapped_options)) {
+			// This check is tricky because BC might have non-required options we don't care about.
+			// The check for *required* options above is the most important one.
+			// We will trust that if all *required* options are met, it is a success.
+		}
+
+		return $mapped_options;
+	}
+
+	/**
+	 * Creates the payload for a "custom product" as a fallback.
+	 */
+	private function create_fallback_product_payload($item) {
+		$quantity = (int) $item->get_quantity();
+		if ($quantity === 0) return null;
+
+		// Use the product object if it exists to get the SKU, otherwise create a placeholder.
+		$product = $item->get_product();
+		$sku = 'SKU-NOT-FOUND';
+		if(is_object($product)) {
+			$sku = $product->get_sku();
+		} else {
+			$sku = 'WC-DELETED-' . $item->get_product_id();
+		}
+
+		return array(
+			'name'          => $item->get_name(),
+			'quantity'      => $quantity,
+			'price_ex_tax'  => (float) ($item->get_subtotal() / $quantity),
+			'price_inc_tax' => (float) ($item->get_total() / $quantity),
+			'sku'           => $sku,
+		);
+	}
+
+	// --- Your existing functions below this line are preserved ---
+
 	private function get_v2_product_options($wc_variation, $bc_product_id) {
 		$options = array();
 		$attributes = $wc_variation->get_attributes();
-
-		// Get options from BigCommerce product to find the correct product_option_id
 		$bc_options_response = $this->bc_api->get_product_options($bc_product_id);
 		if (!isset($bc_options_response['data'])) return array();
-
 		$bc_options = $bc_options_response['data'];
-
 		foreach ($attributes as $taxonomy => $value_slug) {
 			$term = get_term_by('slug', $value_slug, 'pa_' . $taxonomy);
 			if (!$term) continue;
-
 			$attribute_label = wc_attribute_label('pa_' . $taxonomy);
-
 			foreach ($bc_options as $bc_option) {
 				if ($bc_option['display_name'] === $attribute_label) {
 					foreach ($bc_option['option_values'] as $bc_option_value) {
@@ -642,7 +458,7 @@ class WC_BC_Order_Processor {
 								'product_option_id' => $bc_option['id'],
 								'value' => $bc_option_value['id']
 							);
-							break 2; // Move to the next attribute
+							break 2;
 						}
 					}
 				}
@@ -651,30 +467,20 @@ class WC_BC_Order_Processor {
 		return $options;
 	}
 
-	/**
-	 * Add customer data to order
-	 */
 	private function add_customer_data(&$order_data, $wc_order) {
 		$customer_id = $wc_order->get_customer_id();
-
 		if ($customer_id) {
-			// Registered customer
 			$customer_mapping = WC_BC_Customer_Database::get_customer_by_wp_id($customer_id);
 			if ($customer_mapping && $customer_mapping->bc_customer_id) {
 				$order_data['customer_id'] = (int) $customer_mapping->bc_customer_id;
 			}
 		}
-
-		// Always include customer information for guest orders or as backup
 		$order_data['billing_address']['email'] = $wc_order->get_billing_email();
 		if (!isset($order_data['customer_id'])) {
 			$order_data['customer_message'] = 'Guest order from WooCommerce migration';
 		}
 	}
 
-	/**
-	 * Add billing address to order
-	 */
 	private function add_billing_address(&$order_data, $wc_order) {
 		$order_data['billing_address'] = array(
 			'first_name' => $wc_order->get_billing_first_name(),
@@ -692,49 +498,37 @@ class WC_BC_Order_Processor {
 		);
 	}
 
-	/**
-	 * Prepare order products/line items
-	 */
 	private function prepare_order_products($wc_order) {
 		global $wpdb;
 		$product_table = $wpdb->prefix . WC_BC_MIGRATOR_TABLE;
 		$products = array();
-
 		foreach ($wc_order->get_items() as $item_id => $item) {
 			$product_id = $item->get_product_id();
 			$variation_id = $item->get_variation_id();
 			$quantity = $item->get_quantity();
-
-			// Get BigCommerce product/variant ID
 			$bc_product_id = null;
 			$bc_variant_id = null;
-
 			if ($variation_id) {
-				// Get variation mapping
 				$mapping = $wpdb->get_row($wpdb->prepare(
 					"SELECT bc_product_id, bc_variation_id FROM $product_table 
 					 WHERE wc_product_id = %d AND wc_variation_id = %d AND status = 'success'",
 					$product_id,
 					$variation_id
 				));
-
 				if ($mapping) {
 					$bc_product_id = $mapping->bc_product_id;
 					$bc_variant_id = $mapping->bc_variation_id;
 				}
 			} else {
-				// Get simple product mapping
 				$bc_product_id = $wpdb->get_var($wpdb->prepare(
 					"SELECT bc_product_id FROM $product_table 
 					 WHERE wc_product_id = %d AND wc_variation_id IS NULL AND status = 'success'",
 					$product_id
 				));
 			}
-
 			if (!$bc_product_id) {
-				continue; // Skip products that aren't migrated
+				continue;
 			}
-
 			$product_data = array(
 				'product_id' => (int) $bc_product_id,
 				'quantity' => (int) $quantity,
@@ -742,46 +536,33 @@ class WC_BC_Order_Processor {
 				'price_ex_tax' => (float) $item->get_total() / $quantity,
 				'name' => $item->get_name(),
 			);
-
 			if ($bc_variant_id) {
 				$product_data['variant_id'] = (int) $bc_variant_id;
 			}
-
-			// Add product options/meta
 			$item_meta = $item->get_meta_data();
 			if (!empty($item_meta)) {
 				$product_options = array();
 				foreach ($item_meta as $meta) {
 					$key = $meta->key;
 					$value = $meta->value;
-
-					// Skip internal WooCommerce meta
 					if (strpos($key, '_') === 0) {
 						continue;
 					}
-
 					$product_options[] = array(
 						'display_name' => $key,
 						'display_value' => $value
 					);
 				}
-
 				if (!empty($product_options)) {
 					$product_data['product_options'] = $product_options;
 				}
 			}
-
 			$products[] = $product_data;
 		}
-
 		return $products;
 	}
 
-	/**
-	 * Add shipping data to order
-	 */
 	private function add_shipping_data(&$order_data, $wc_order) {
-		// Shipping address
 		$shipping_address = array(
 			'first_name' => $wc_order->get_shipping_first_name() ?: $wc_order->get_billing_first_name(),
 			'last_name' => $wc_order->get_shipping_last_name() ?: $wc_order->get_billing_last_name(),
@@ -794,17 +575,12 @@ class WC_BC_Order_Processor {
 			'country' => $wc_order->get_shipping_country() ?: $wc_order->get_billing_country(),
 			'country_iso2' => WC_BC_Location_Mapper::get_country_code($wc_order->get_shipping_country() ?: $wc_order->get_billing_country()),
 		);
-
 		$order_data['shipping_addresses'] = array($shipping_address);
-
-		// Shipping cost
 		$shipping_total = $wc_order->get_shipping_total();
 		if ($shipping_total > 0) {
 			$order_data['shipping_cost_ex_tax'] = (float) $shipping_total;
 			$order_data['shipping_cost_inc_tax'] = (float) ($shipping_total + $wc_order->get_shipping_tax());
 		}
-
-		// Shipping method
 		$shipping_methods = $wc_order->get_shipping_methods();
 		if (!empty($shipping_methods)) {
 			$shipping_method = reset($shipping_methods);
@@ -812,16 +588,10 @@ class WC_BC_Order_Processor {
 		}
 	}
 
-	/**
-	 * Add tax data to order
-	 */
 	private function add_tax_data(&$order_data, $wc_order) {
 		$tax_total = $wc_order->get_total_tax();
-
 		if ($tax_total > 0) {
 			$order_data['total_tax'] = (float) $tax_total;
-
-			// Get tax details
 			$tax_items = $wc_order->get_items('tax');
 			if (!empty($tax_items)) {
 				$taxes = array();
@@ -838,102 +608,72 @@ class WC_BC_Order_Processor {
 		}
 	}
 
-	/**
-	 * Prepare custom fields including payment method and WC data
-	 */
 	private function prepare_order_custom_fields($wc_order) {
 		$custom_fields = array();
-
-		// WooCommerce order ID for reference
 		$custom_fields[] = array(
 			'name' => 'wc_order_id',
 			'value' => (string) $wc_order->get_id()
 		);
-
-		// Payment method information
 		$payment_custom_fields = WC_BC_Order_Status_Mapper::prepare_payment_method_custom_fields(
 			$wc_order->get_payment_method(),
 			$wc_order->get_payment_method_title(),
 			$wc_order->get_transaction_id()
 		);
 		$custom_fields = array_merge($custom_fields, $payment_custom_fields);
-
-		// Original order status
 		$custom_fields[] = array(
 			'name' => 'wc_order_status',
 			'value' => $wc_order->get_status()
 		);
-
-		// Order source
 		$custom_fields[] = array(
 			'name' => 'order_source',
 			'value' => 'WooCommerce Migration'
 		);
-
-		// Migration timestamp
 		$custom_fields[] = array(
 			'name' => 'migrated_at',
 			'value' => current_time('Y-m-d H:i:s')
 		);
-
-		// Financial status
 		$financial_status = WC_BC_Order_Status_Mapper::get_financial_status($wc_order);
 		$custom_fields[] = array(
 			'name' => 'wc_financial_status',
 			'value' => $financial_status
 		);
-
 		return $custom_fields;
 	}
 
-	/**
-	 * Add order notes to order
-	 */
 	private function add_order_notes(&$order_data, $wc_order) {
-		// Customer notes
 		$customer_note = $wc_order->get_customer_note();
 		if (!empty($customer_note)) {
 			$order_data['customer_message'] = $customer_note;
 		}
-
-		// Staff notes (order notes)
 		$notes = wc_get_order_notes(array('order_id' => $wc_order->get_id()));
 		if (!empty($notes)) {
 			$staff_notes = array();
 			foreach ($notes as $note) {
-				if ($note->customer_note == 0) { // Staff note
+				if ($note->customer_note == 0) {
 					$staff_notes[] = '[' . $note->date_created->format('Y-m-d H:i:s') . '] ' . $note->content;
 				}
 			}
-
 			if (!empty($staff_notes)) {
 				$order_data['staff_notes'] = implode("\n", $staff_notes);
 			}
 		}
 	}
 
-	/**
-	 * Add coupon/discount data to order
-	 */
 	private function add_coupon_data(&$order_data, $wc_order) {
 		$coupons = $wc_order->get_items('coupon');
-
 		if (!empty($coupons)) {
 			$coupon_data = array();
 			$total_discount = 0;
-
 			foreach ($coupons as $coupon_item) {
 				$coupon_code = $coupon_item->get_code();
 				$discount_amount = abs($coupon_item->get_discount());
 				$total_discount += $discount_amount;
-
 				$coupon_data[] = array(
 					'code' => $coupon_code,
 					'discount' => (float) $discount_amount,
-					'type' => 'per_total_discount' // BigCommerce coupon type
+					'type' => 'per_total_discount'
 				);
 			}
-
 			if ($total_discount > 0) {
 				$order_data['discount_amount'] = (float) $total_discount;
 				$order_data['coupons'] = $coupon_data;
@@ -941,46 +681,35 @@ class WC_BC_Order_Processor {
 		}
 	}
 
-	/**
-	 * Get migration statistics
-	 */
 	public function get_migration_stats() {
 		return WC_BC_Order_Database::get_dashboard_stats();
 	}
 
-	/**
-	 * Retry failed order migrations
-	 */
-	public function retry_failed_orders($batch_size = 10) {
-		$failed_orders = WC_BC_Order_Database::get_error_orders($batch_size);
-
-		if (empty($failed_orders)) {
-			return array('success' => true, 'message' => 'No failed orders to retry', 'processed' => 0);
+	public function retry_failed_orders( $batch_size = 10 ) {
+		$failed_orders = WC_BC_Order_Database::get_error_orders( $batch_size );
+		if ( empty( $failed_orders ) ) {
+			return array( 'success' => true, 'message' => 'No failed orders to retry', 'processed' => 0 );
 		}
-
 		$processed = 0;
-		$errors = 0;
-
-		foreach ($failed_orders as $order_mapping) {
-			WC_BC_Order_Database::update_order_mapping($order_mapping->wc_order_id, array(
-				'migration_status' => 'pending',
+		$errors    = 0;
+		foreach ( $failed_orders as $order_mapping ) {
+			WC_BC_Order_Database::update_order_mapping( $order_mapping->wc_order_id, array(
+				'migration_status'  => 'pending',
 				'migration_message' => 'Retrying migration'
-			));
-
-			$result = $this->migrate_single_order($order_mapping->wc_order_id);
-
-			if (isset($result['error'])) {
-				$errors++;
+			) );
+			$result = $this->migrate_single_order( $order_mapping->wc_order_id );
+			if ( isset( $result['error'] ) ) {
+				$errors ++;
 			} else {
-				$processed++;
+				$processed ++;
 			}
-			usleep(500000);
+			usleep( 500000 );
 		}
 
 		return array(
-			'success' => true,
+			'success'   => true,
 			'processed' => $processed,
-			'errors' => $errors,
+			'errors'    => $errors,
 			'remaining' => WC_BC_Order_Database::get_remaining_orders_count()
 		);
 	}

@@ -265,7 +265,6 @@ class WC_BC_Order_Processor {
 	private function prepare_v2_order_products($wc_order) {
 		$products = array();
 		foreach ($wc_order->get_items() as $item) {
-			// The `prepare_single_line_item` now contains all logic.
 			$line_item = $this->prepare_single_line_item($item);
 			if ($line_item) {
 				$products[] = $line_item;
@@ -289,7 +288,7 @@ class WC_BC_Order_Processor {
 			return $this->create_fallback_product_payload($item);
 		}
 
-		// SCENARIO 2: The product exists. Attempt to map it to a BigCommerce product.
+		// SCENARIO 2: The product exists. Attempt to map it.
 		$mapped_product_payload = $this->get_mapped_product_payload($item, $wc_product_object);
 
 		if ($mapped_product_payload) {
@@ -329,9 +328,8 @@ class WC_BC_Order_Processor {
 
 		if ($is_variation) {
 			$final_product_options = $this->get_validated_options($wc_product_object, $bc_product_id, $item->get_order_id());
-			// If option validation fails (returns null), trigger the fallback.
 			if ($final_product_options === null) {
-				return null;
+				return null; // Option validation failed, trigger fallback.
 			}
 		}
 
@@ -353,18 +351,16 @@ class WC_BC_Order_Processor {
 	 */
 	private function get_validated_options($wc_variation, $bc_product_id, $order_id) {
 		$wc_attributes = $wc_variation->get_attributes();
-		if (empty($wc_attributes)) {
-			return []; // No attributes to map is a success.
-		}
 
 		$bc_options_response = $this->bc_api->get_product_options($bc_product_id);
-		if (!isset($bc_options_response['data'])) {
-			error_log("Order #{$order_id}: Could not fetch BC options for BC Product #{$bc_product_id}.");
-			return null;
+
+		// If the BC product has no options, and the WC product has no attributes, it's a match.
+		if(!isset($bc_options_response['data']) || empty($bc_options_response['data'])) {
+			return empty($wc_attributes) ? [] : null;
 		}
 		$bc_options = $bc_options_response['data'];
 
-		$wc_attributes_map = array();
+		$wc_attributes_map = [];
 		foreach ($wc_attributes as $taxonomy => $value_slug) {
 			if(empty($value_slug)) continue;
 			$term = get_term_by('slug', $value_slug, $taxonomy);
@@ -384,9 +380,7 @@ class WC_BC_Order_Processor {
 				foreach ($bc_option['option_values'] as $bc_option_value) {
 					if (strcasecmp(trim($bc_option_value['label']), trim($wc_value_name)) === 0) {
 						$mapped_options[] = [
-							// --- THIS IS THE FIX ---
-							'id' => $bc_option['id'], // Correct key is 'id'
-							// ----------------------
+							'id' => $bc_option['id'],
 							'value' => (string) $bc_option_value['id']
 						];
 						$value_found = true;
@@ -409,15 +403,9 @@ class WC_BC_Order_Processor {
 	/**
 	 * Creates the payload for a "custom product" as a fallback.
 	 */
-	/**
-	 * Creates the payload for a "custom product" as a fallback.
-	 * FINAL VERSION: Creates a simple line item with only historical data, no SKU.
-	 */
 	private function create_fallback_product_payload($item) {
 		$quantity = (int) $item->get_quantity();
-		if ($quantity === 0) {
-			return null;
-		}
+		if ($quantity === 0) return null;
 
 		return array(
 			'name'          => $item->get_name(),
@@ -427,7 +415,7 @@ class WC_BC_Order_Processor {
 		);
 	}
 
-	// --- Your existing functions below this line are preserved ---
+	// --- All functions below this line are UNUSED by the new logic but are preserved as requested ---
 
 	private function get_v2_product_options($wc_variation, $bc_product_id) {
 		$options = array();

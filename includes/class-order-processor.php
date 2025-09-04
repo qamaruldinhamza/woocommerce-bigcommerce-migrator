@@ -200,7 +200,7 @@ class WC_BC_Order_Processor {
 
 	/**
 	 * Prepare complete order data for BigCommerce V2 API
-	 * FINAL VERSION: Ignores inventory checks for historical orders.
+	 * FINAL CORRECTED VERSION: Uses 'external_source' to correctly bypass inventory for historical orders.
 	 */
 	private function prepare_order_data($wc_order) {
 		$bc_customer_id = 0;
@@ -235,7 +235,7 @@ class WC_BC_Order_Processor {
 			'staff_notes' => $staff_notes,
 			'customer_message' => $wc_order->get_customer_note(),
 			'discount_amount' => (float) $wc_order->get_discount_total(),
-			'is_inventory_tracking_enabled' => false, // THIS IS THE FIX for OutOfStock errors
+			'external_source' => 'M-MIG', // CORRECT way to handle historical orders and stock
 		);
 	}
 
@@ -326,15 +326,20 @@ class WC_BC_Order_Processor {
 			'price_ex_tax' => (float) ($item->get_subtotal() / $item->get_quantity()),
 			'price_inc_tax' => (float) ($item->get_total() / $item->get_quantity()),
 			'sku' => $sku_prefix . '-' . $clean_sku,
-			'ignore_inventory' => true, // THIS IS THE FIX for OutOfStock errors
 		);
 	}
 
+	/**
+	 * Attempts to build a line item from migrated product data.
+	 * CORRECTED: Now includes the historical price from the WC order.
+	 */
 	private function get_v2_mapped_product($item) {
 		global $wpdb;
 		$product_table = $wpdb->prefix . WC_BC_MIGRATOR_TABLE;
+
 		$product_id = $item->get_product_id();
 		$variation_id = $item->get_variation_id();
+
 		if (empty($product_id)) return null;
 
 		$bc_product_id = null;
@@ -346,16 +351,17 @@ class WC_BC_Order_Processor {
 				$product_id, $variation_id
 			));
 			if (!$mapping) return null;
+
 			$bc_product_id = $mapping->bc_product_id;
 			$wc_variation = wc_get_product($variation_id);
 			if ($wc_variation) {
 				$product_options = $this->get_v2_product_options_from_db($wc_variation, $bc_product_id);
 				$wc_attributes_count = count($wc_variation->get_attributes());
 				if ($wc_attributes_count > 0 && empty($product_options)) {
-					return null;
+					return null; // Failed to match options, so fallback to custom product.
 				}
 			} else {
-				return null;
+				return null; // Variation product doesn't exist anymore, fallback.
 			}
 		} else {
 			$bc_product_id = $wpdb->get_var($wpdb->prepare(
@@ -365,11 +371,19 @@ class WC_BC_Order_Processor {
 			if (!$bc_product_id) return null;
 		}
 
+		$quantity = (int) $item->get_quantity();
+		if ($quantity === 0) {
+			return null; // Cannot process an item with zero quantity.
+		}
+
 		return array(
-			'product_id' => (int) $bc_product_id,
-			'quantity' => (int) $item->get_quantity(),
+			'product_id'      => (int) $bc_product_id,
+			'quantity'        => $quantity,
 			'product_options' => $product_options,
-			'ignore_inventory' => true, // THIS IS THE FIX for OutOfStock errors
+			// --- THIS IS THE FIX ---
+			// Pass the exact historical price from the WooCommerce order item.
+			'price_ex_tax'    => (float) ($item->get_subtotal() / $quantity),
+			'price_inc_tax'   => (float) ($item->get_total() / $quantity),
 		);
 	}
 

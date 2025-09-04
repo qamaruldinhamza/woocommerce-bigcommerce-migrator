@@ -359,14 +359,14 @@ class WC_BC_Order_Processor {
 
 		$bc_options_response = $this->bc_api->get_product_options($bc_product_id);
 		if (!isset($bc_options_response['data'])) {
-			error_log("Order #{$order_id}: Could not fetch BC options for BC Product #{$bc_product_id}. Cannot map options.");
+			error_log("Order #{$order_id}: Could not fetch BC options for BC Product #{$bc_product_id}.");
 			return null;
 		}
 		$bc_options = $bc_options_response['data'];
 
-		$wc_attributes_map = [];
+		$wc_attributes_map = array();
 		foreach ($wc_attributes as $taxonomy => $value_slug) {
-			if(empty($value_slug)) continue; // Handle cases where an attribute value might be empty
+			if(empty($value_slug)) continue;
 			$term = get_term_by('slug', $value_slug, $taxonomy);
 			if (!$term) continue;
 			$attribute_label = wc_attribute_label($taxonomy);
@@ -384,7 +384,9 @@ class WC_BC_Order_Processor {
 				foreach ($bc_option['option_values'] as $bc_option_value) {
 					if (strcasecmp(trim($bc_option_value['label']), trim($wc_value_name)) === 0) {
 						$mapped_options[] = [
-							'product_option_id' => $bc_option['id'],
+							// --- THIS IS THE FIX ---
+							'id' => $bc_option['id'], // Correct key is 'id'
+							// ----------------------
 							'value' => (string) $bc_option_value['id']
 						];
 						$value_found = true;
@@ -401,32 +403,20 @@ class WC_BC_Order_Processor {
 			}
 		}
 
-		// FINAL CHECK: Ensure all WC attributes were considered.
-		// If a required BC option was not in the WC attributes map, we already returned null.
-		// This ensures we have a complete match.
-		if(count($wc_attributes_map) !== count($mapped_options)) {
-			// This check is tricky because BC might have non-required options we don't care about.
-			// The check for *required* options above is the most important one.
-			// We will trust that if all *required* options are met, it is a success.
-		}
-
 		return $mapped_options;
 	}
 
 	/**
 	 * Creates the payload for a "custom product" as a fallback.
 	 */
+	/**
+	 * Creates the payload for a "custom product" as a fallback.
+	 * FINAL VERSION: Creates a simple line item with only historical data, no SKU.
+	 */
 	private function create_fallback_product_payload($item) {
 		$quantity = (int) $item->get_quantity();
-		if ($quantity === 0) return null;
-
-		// Use the product object if it exists to get the SKU, otherwise create a placeholder.
-		$product = $item->get_product();
-		$sku = 'SKU-NOT-FOUND';
-		if(is_object($product)) {
-			$sku = $product->get_sku();
-		} else {
-			$sku = 'WC-DELETED-' . $item->get_product_id();
+		if ($quantity === 0) {
+			return null;
 		}
 
 		return array(
@@ -434,7 +424,6 @@ class WC_BC_Order_Processor {
 			'quantity'      => $quantity,
 			'price_ex_tax'  => (float) ($item->get_subtotal() / $quantity),
 			'price_inc_tax' => (float) ($item->get_total() / $quantity),
-			'sku'           => $sku,
 		);
 	}
 

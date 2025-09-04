@@ -388,6 +388,7 @@ class WC_BC_Order_Processor {
 
 	/**
 	 * Get product options in V2 format for a variation
+	 * CORRECTED: Uses case-insensitive matching for higher accuracy.
 	 */
 	private function get_v2_product_options_from_db($wc_variation, $bc_product_id) {
 		$options = array();
@@ -404,20 +405,23 @@ class WC_BC_Order_Processor {
 			$attribute_label = wc_attribute_label('pa_' . $taxonomy_slug);
 
 			foreach ($bc_options as $bc_option) {
-				if ($bc_option['display_name'] === $attribute_label) {
+				// Use case-insensitive comparison for the option name
+				if (strcasecmp($bc_option['display_name'], $attribute_label) === 0) {
 					foreach ($bc_option['option_values'] as $bc_option_value) {
-						if ($bc_option_value['label'] === $term->name) {
+						// Use case-insensitive comparison for the option value's label
+						if (strcasecmp($bc_option_value['label'], $term->name) === 0) {
 							$options[] = array(
 								'id' => $bc_option_value['id'],
 								'value' => (string) $bc_option_value['id'],
 								'product_option_id' => $bc_option['id']
 							);
-							break 2;
+							break 2; // Found match, move to the next WC attribute
 						}
 					}
 				}
 			}
 		}
+		// Ensure we found a match for every attribute
 		return count($attributes) === count($options) ? $options : array();
 	}
 

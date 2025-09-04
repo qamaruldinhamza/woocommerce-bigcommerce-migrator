@@ -154,10 +154,16 @@ class WC_BC_Order_Processor {
 		try {
 			$existing_mapping = WC_BC_Order_Database::get_order_by_wc_id($wc_order_id);
 			if ($existing_mapping && $existing_mapping->bc_order_id) {
+				WC_BC_Order_Database::update_order_mapping($wc_order_id, ['migration_status' => 'success', 'migration_message' => 'Order already migrated.']);
 				return array('success' => true, 'bc_order_id' => $existing_mapping->bc_order_id, 'already_exists' => true);
 			}
 
 			$order_data = $this->prepare_order_data($wc_order);
+
+			// If there are no products (all fallbacks failed), mark as error.
+			if (empty($order_data['products'])) {
+				throw new Exception('Could not process any line items for this order. Check product mapping and data.');
+			}
 
 			$result = $this->bc_api->create_order($order_data);
 
@@ -194,7 +200,7 @@ class WC_BC_Order_Processor {
 
 	/**
 	 * Prepare complete order data for BigCommerce V2 API
-	 * CORRECTED: Now includes both subtotal and shipping tax fields.
+	 * FINAL VERSION: Ignores inventory checks for historical orders.
 	 */
 	private function prepare_order_data($wc_order) {
 		$bc_customer_id = 0;
@@ -220,7 +226,7 @@ class WC_BC_Order_Processor {
 			'shipping_addresses' => $this->prepare_v2_shipping_addresses($wc_order),
 			'products' => $this->prepare_v2_order_products($wc_order),
 			'subtotal_ex_tax' => (float) $wc_order->get_subtotal(),
-			'subtotal_inc_tax' => (float) ($wc_order->get_subtotal() + $wc_order->get_total_tax() - $wc_order->get_shipping_tax()),
+			'subtotal_inc_tax' => (float) ($wc_order->get_subtotal() + ($wc_order->get_total_tax() - $wc_order->get_shipping_tax())),
 			'total_ex_tax' => (float) ($wc_order->get_total() - $wc_order->get_total_tax()),
 			'total_inc_tax' => (float) $wc_order->get_total(),
 			'shipping_cost_ex_tax' => (float) $wc_order->get_shipping_total(),
@@ -229,21 +235,16 @@ class WC_BC_Order_Processor {
 			'staff_notes' => $staff_notes,
 			'customer_message' => $wc_order->get_customer_note(),
 			'discount_amount' => (float) $wc_order->get_discount_total(),
+			'is_inventory_tracking_enabled' => false, // THIS IS THE FIX for OutOfStock errors
 		);
 	}
 
-	/**
-	 * Prepare V2 billing address
-	 * CORRECTED: Now uses the location mapper for robust country name translation.
-	 */
 	private function prepare_v2_billing_address($wc_order) {
 		$country_code = $wc_order->get_billing_country();
 		$country_name = WC_BC_Location_Mapper::get_bc_country_name($country_code);
-
 		if (empty($country_name)) {
 			throw new Exception("Invalid or unrecognized billing country code '{$country_code}' for Order #" . $wc_order->get_id());
 		}
-
 		return array(
 			'first_name' => $wc_order->get_billing_first_name(),
 			'last_name' => $wc_order->get_billing_last_name(),
@@ -260,25 +261,17 @@ class WC_BC_Order_Processor {
 		);
 	}
 
-	/**
-	 * Prepare V2 shipping addresses
-	 * CORRECTED: Now uses the location mapper for robust country name translation.
-	 */
 	private function prepare_v2_shipping_addresses($wc_order) {
 		if (!$wc_order->get_shipping_address_1()) {
 			return array();
 		}
-
 		$shipping_methods = $wc_order->get_shipping_methods();
 		$shipping_method_name = !empty($shipping_methods) ? reset($shipping_methods)->get_method_title() : 'Migrated Shipping';
-
 		$country_code = $wc_order->get_shipping_country();
 		$country_name = WC_BC_Location_Mapper::get_bc_country_name($country_code);
-
 		if (empty($country_name)) {
 			throw new Exception("Invalid or unrecognized shipping country code '{$country_code}' for Order #" . $wc_order->get_id());
 		}
-
 		$shipping_address = array(
 			'first_name' => $wc_order->get_shipping_first_name(),
 			'last_name' => $wc_order->get_shipping_last_name(),
@@ -292,13 +285,9 @@ class WC_BC_Order_Processor {
 			'country_iso2' => $country_code,
 			'shipping_method' => $shipping_method_name,
 		);
-
 		return array($shipping_address);
 	}
 
-	/**
-	 * Prepare V2 order products with fallbacks
-	 */
 	private function prepare_v2_order_products($wc_order) {
 		$products = array();
 		foreach ($wc_order->get_items() as $item_id => $item) {
@@ -310,47 +299,42 @@ class WC_BC_Order_Processor {
 		return $products;
 	}
 
-	/**
-	 * Tries to get a fully-mapped line item, falls back to a custom line item.
-	 */
 	private function get_v2_line_item($item) {
 		$mapped_product = $this->get_v2_mapped_product($item);
 		if ($mapped_product) {
 			return $mapped_product;
 		}
-
 		error_log("Order #" . $item->get_order_id() . ": Falling back to custom product for item '" . $item->get_name() . "'. The original product may be deleted or unmapped.");
 		$product = $item->get_product();
+		$sku_prefix = 'WC-' . ($item->get_variation_id() ?: $item->get_product_id());
+		$original_sku = is_object($product) ? $product->get_sku() : 'DELETED';
+		$clean_sku = preg_replace('/[^a-zA-Z0-9\-\_]/', '', $original_sku); // Clean the SKU
 
 		if (!is_object($product)) {
 			return array(
-				'name'          => $item->get_name(),
-				'quantity'      => (int) $item->get_quantity(),
-				'price_ex_tax'  => (float) $item->get_subtotal() / $item->get_quantity(),
-				'price_inc_tax' => (float) $item->get_total() / $item->get_quantity(),
-				'sku'           => 'WC-DELETED-PROD-' . $item->get_product_id()
+				'name' => $item->get_name(),
+				'quantity' => (int) $item->get_quantity(),
+				'price_ex_tax' => (float) ($item->get_subtotal() / $item->get_quantity()),
+				'price_inc_tax' => (float) ($item->get_total() / $item->get_quantity()),
+				'sku' => 'WC-DELETED-' . $item->get_product_id()
 			);
 		}
 
 		return array(
-			'name'          => $item->get_name(),
-			'quantity'      => (int) $item->get_quantity(),
-			'price_ex_tax'  => (float) $item->get_subtotal() / $item->get_quantity(),
-			'price_inc_tax' => (float) $item->get_total() / $item->get_quantity(),
-			'sku'           => 'WC-' . ($item->get_variation_id() ?: $item->get_product_id()) . '-' . $product->get_sku(),
+			'name' => $item->get_name(),
+			'quantity' => (int) $item->get_quantity(),
+			'price_ex_tax' => (float) ($item->get_subtotal() / $item->get_quantity()),
+			'price_inc_tax' => (float) ($item->get_total() / $item->get_quantity()),
+			'sku' => $sku_prefix . '-' . $clean_sku,
+			'ignore_inventory' => true, // THIS IS THE FIX for OutOfStock errors
 		);
 	}
 
-	/**
-	 * Attempts to build a line item from migrated product data.
-	 */
 	private function get_v2_mapped_product($item) {
 		global $wpdb;
 		$product_table = $wpdb->prefix . WC_BC_MIGRATOR_TABLE;
-
 		$product_id = $item->get_product_id();
 		$variation_id = $item->get_variation_id();
-
 		if (empty($product_id)) return null;
 
 		$bc_product_id = null;
@@ -362,12 +346,14 @@ class WC_BC_Order_Processor {
 				$product_id, $variation_id
 			));
 			if (!$mapping) return null;
-
 			$bc_product_id = $mapping->bc_product_id;
 			$wc_variation = wc_get_product($variation_id);
 			if ($wc_variation) {
 				$product_options = $this->get_v2_product_options_from_db($wc_variation, $bc_product_id);
-				if (empty($product_options) && count($wc_variation->get_attributes()) > 0) return null;
+				$wc_attributes_count = count($wc_variation->get_attributes());
+				if ($wc_attributes_count > 0 && empty($product_options)) {
+					return null;
+				}
 			} else {
 				return null;
 			}
@@ -382,46 +368,40 @@ class WC_BC_Order_Processor {
 		return array(
 			'product_id' => (int) $bc_product_id,
 			'quantity' => (int) $item->get_quantity(),
-			'product_options' => $product_options
+			'product_options' => $product_options,
+			'ignore_inventory' => true, // THIS IS THE FIX for OutOfStock errors
 		);
 	}
 
-	/**
-	 * Get product options in V2 format for a variation
-	 * CORRECTED: Uses case-insensitive matching for higher accuracy.
-	 */
 	private function get_v2_product_options_from_db($wc_variation, $bc_product_id) {
 		$options = array();
 		$attributes = $wc_variation->get_attributes();
-
 		$bc_options_response = $this->bc_api->get_product_options($bc_product_id);
 		if (!isset($bc_options_response['data'])) return array();
 		$bc_options = $bc_options_response['data'];
 
 		foreach ($attributes as $taxonomy_slug => $value_slug) {
+			if (empty($value_slug)) continue;
 			$term = get_term_by('slug', $value_slug, 'pa_' . $taxonomy_slug);
 			if (!$term) continue;
 
 			$attribute_label = wc_attribute_label('pa_' . $taxonomy_slug);
 
 			foreach ($bc_options as $bc_option) {
-				// Use case-insensitive comparison for the option name
 				if (strcasecmp($bc_option['display_name'], $attribute_label) === 0) {
 					foreach ($bc_option['option_values'] as $bc_option_value) {
-						// Use case-insensitive comparison for the option value's label
 						if (strcasecmp($bc_option_value['label'], $term->name) === 0) {
 							$options[] = array(
 								'id' => $bc_option_value['id'],
 								'value' => (string) $bc_option_value['id'],
 								'product_option_id' => $bc_option['id']
 							);
-							break 2; // Found match, move to the next WC attribute
+							break 2;
 						}
 					}
 				}
 			}
 		}
-		// Ensure we found a match for every attribute
 		return count($attributes) === count($options) ? $options : array();
 	}
 

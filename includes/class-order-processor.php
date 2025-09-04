@@ -234,14 +234,11 @@ class WC_BC_Order_Processor {
 
 	/**
 	 * Prepare V2 billing address
-	 * CORRECTED: Now safely handles invalid country codes by throwing an exception.
+	 * CORRECTED: Now uses the location mapper for robust country name translation.
 	 */
 	private function prepare_v2_billing_address($wc_order) {
 		$country_code = $wc_order->get_billing_country();
-		if ($country_code === 'UK') $country_code = 'GB'; // Common legacy code fix
-
-		$countries = WC()->countries->get_countries();
-		$country_name = $countries[strtoupper($country_code)] ?? '';
+		$country_name = WC_BC_Location_Mapper::get_bc_country_name($country_code);
 
 		if (empty($country_name)) {
 			throw new Exception("Invalid or unrecognized billing country code '{$country_code}' for Order #" . $wc_order->get_id());
@@ -265,7 +262,7 @@ class WC_BC_Order_Processor {
 
 	/**
 	 * Prepare V2 shipping addresses
-	 * CORRECTED: Now safely handles invalid country codes by throwing an exception.
+	 * CORRECTED: Now uses the location mapper for robust country name translation.
 	 */
 	private function prepare_v2_shipping_addresses($wc_order) {
 		if (!$wc_order->get_shipping_address_1()) {
@@ -276,10 +273,7 @@ class WC_BC_Order_Processor {
 		$shipping_method_name = !empty($shipping_methods) ? reset($shipping_methods)->get_method_title() : 'Migrated Shipping';
 
 		$country_code = $wc_order->get_shipping_country();
-		if ($country_code === 'UK') $country_code = 'GB';
-
-		$countries = WC()->countries->get_countries();
-		$country_name = $countries[strtoupper($country_code)] ?? '';
+		$country_name = WC_BC_Location_Mapper::get_bc_country_name($country_code);
 
 		if (empty($country_name)) {
 			throw new Exception("Invalid or unrecognized shipping country code '{$country_code}' for Order #" . $wc_order->get_id());

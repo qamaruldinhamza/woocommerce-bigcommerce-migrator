@@ -174,4 +174,37 @@ class WC_BC_Location_Mapper {
 			'is_valid' => self::is_valid_state_for_country($state_code, $country_code)
 		);
 	}
+
+	/**
+	 * Gets the BigCommerce-compatible full country name from a WC country code.
+	 * This acts as a translation layer for names that differ between platforms.
+	 */
+	public static function get_bc_country_name($country_code) {
+		if (empty($country_code)) {
+			return '';
+		}
+
+		// Manual fixes for common legacy codes before lookup
+		if (strtoupper($country_code) === 'UK') {
+			$country_code = 'GB';
+		}
+
+		// Get the standard name from WooCommerce
+		$countries = WC()->countries->get_countries();
+		$wc_country_name = $countries[strtoupper($country_code)] ?? '';
+
+		if (empty($wc_country_name)) {
+			return ''; // Invalid code, return empty to be handled by the caller
+		}
+
+		// Mapping for names that are known to differ between WooCommerce and BigCommerce
+		$name_map = array(
+			'United States (US)' => 'United States',
+			'United Kingdom (UK)' => 'United Kingdom',
+			// Add other known discrepancies here as you find them
+		);
+
+		// Return the mapped name if it exists, otherwise return the standard WC name
+		return $name_map[$wc_country_name] ?? $wc_country_name;
+	}
 }

@@ -444,7 +444,7 @@ class WC_BC_Order_Processor {
 					foreach ($bc_option['option_values'] as $bc_option_value) {
 						if ($bc_option_value['label'] === $term->name) {
 							$options[] = array(
-								'product_option_id' => $bc_option['id'],
+								'id' => $bc_option['id'],
 								'value' => $bc_option_value['id']
 							);
 							break 2;

@@ -125,6 +125,9 @@ class WC_BC_Order_Processor {
 		if ( ! $wc_order ) {
 			return array( 'error' => 'WooCommerce order not found' );
 		}
+
+		$order_data = null; // Define here to make it available in the catch block
+
 		try {
 			$existing_mapping = WC_BC_Order_Database::get_order_by_wc_id( $wc_order_id );
 			if ( $existing_mapping && $existing_mapping->bc_order_id ) {
@@ -139,18 +142,28 @@ class WC_BC_Order_Processor {
 					'already_exists' => true
 				);
 			}
+
+			// Prepare the data that will be sent to the API
 			$order_data = $this->prepare_order_data( $wc_order );
+
 			if ( empty( $order_data['products'] ) ) {
 				throw new Exception( 'Could not process any line items for this order. Check product mapping and data.' );
 			}
+
 			$result = $this->bc_api->create_order( $order_data );
+
+			// Check for an API error in the response
 			if ( isset( $result['error'] ) ) {
-				throw new Exception( is_array( $result ) ? json_encode( $result ) : $result );
+				// If there's an error, throw an exception that includes the API response
+				throw new Exception( json_encode( $result['error'] ) );
 			}
+
 			if ( ! isset( $result['data']['id'] ) ) {
 				throw new Exception( 'No order ID returned from BigCommerce: ' . json_encode( $result ) );
 			}
+
 			$bc_order_id = $result['data']['id'];
+
 			WC_BC_Order_Database::update_order_mapping( $wc_order_id, array(
 				'bc_order_id'       => $bc_order_id,
 				'migration_status'  => 'success',
@@ -158,15 +171,32 @@ class WC_BC_Order_Processor {
 			) );
 
 			return array( 'success' => true, 'bc_order_id' => $bc_order_id );
+
 		} catch ( Exception $e ) {
+
+			// This 'catch' block now handles all errors
 			$error_message = $e->getMessage();
-			error_log( "Order migration error for order {$wc_order_id}: {$error_message}" );
+
+			// Attempt to decode the message. If it's our API error, it will be JSON.
+			$decoded_error = json_decode($error_message, true);
+
+			// Prepare the final error response for the API
+			$final_error_response = [
+				'api_error' => (json_last_error() === JSON_ERROR_NONE) ? $decoded_error : $error_message,
+				'sent_payload' => $order_data
+			];
+
+			// Log the full error with payload for server-side debugging
+			error_log( "Order migration error for order {$wc_order_id}: " . json_encode($final_error_response) );
+
+			// Update the database with the full error details
 			WC_BC_Order_Database::update_order_mapping( $wc_order_id, array(
 				'migration_status'  => 'error',
-				'migration_message' => $error_message
+				'migration_message' => json_encode($final_error_response) // Store the full context
 			) );
 
-			return array( 'error' => $error_message );
+			// Return the structured error and payload
+			return array( 'error' => $final_error_response );
 		}
 	}
 

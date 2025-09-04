@@ -340,28 +340,63 @@ class WC_BC_Order_Processor {
 
 		$product_id = $item->get_product_id();
 		$variation_id = $item->get_variation_id();
-		$is_variation = $variation_id > 0;
 
-		$query = $is_variation
-			? $wpdb->prepare("SELECT bc_product_id FROM $product_table WHERE wc_product_id = %d AND wc_variation_id = %d AND status = 'success'", $product_id, $variation_id)
-			: $wpdb->prepare("SELECT bc_product_id FROM $product_table WHERE wc_product_id = %d AND wc_variation_id IS NULL AND status = 'success'", $product_id);
+		// THIS IS THE FIX: The original order item was for a simple product ($variation_id = 0)
+		// but we need to check if the MAPPED product in BigCommerce is now variable.
+		$is_simple_in_wc = $variation_id == 0;
 
-		$mapping = $wpdb->get_row($query);
+		$query = $wpdb->prepare("SELECT bc_product_id, wc_variation_id FROM $product_table WHERE wc_product_id = %d AND status = 'success'", $product_id);
+		$mappings = $wpdb->get_results($query);
+
+		if (empty($mappings)) {
+			error_log("Order #" . $item->get_order_id() . ": No mapping found for WC Product #" . $product_id . ". Falling back.");
+			return null;
+		}
+
+		// If the original was a simple product, but we have multiple mappings (meaning it's now variable), we must fall back.
+		if ($is_simple_in_wc && count($mappings) > 1) {
+			error_log("Order #" . $item->get_order_id() . ": WC Product #{$product_id} was simple but is now variable in BC. Falling back.");
+			return null;
+		}
+
+		$mapping = null;
+		if ($is_simple_in_wc) {
+			$mapping = $mappings[0]; // Use the main product mapping
+		} else {
+			foreach($mappings as $map_row) {
+				if($map_row->wc_variation_id == $variation_id) {
+					$mapping = $map_row;
+					break;
+				}
+			}
+		}
 
 		if (!$mapping) {
-			error_log("Order #" . $item->get_order_id() . ": No mapping found for WC Product #" . $product_id . ". Falling back.");
+			error_log("Order #" . $item->get_order_id() . ": Could not find specific variation mapping for WC Product #" . $product_id . ". Falling back.");
 			return null;
 		}
 
 		$bc_product_id = $mapping->bc_product_id;
 		$final_product_options = [];
 
-		if ($is_variation) {
+		if ($variation_id > 0) {
 			$final_product_options = $this->get_validated_options($wc_product_object, $bc_product_id, $item->get_order_id());
 			if ($final_product_options === null) {
 				return null; // Option validation failed, trigger fallback.
 			}
+		} else {
+			// Even if it's a simple product in WC, check if the BC product has required options.
+			$bc_options_response = $this->bc_api->get_product_options($bc_product_id);
+			if(isset($bc_options_response['data']) && !empty($bc_options_response['data'])) {
+				foreach($bc_options_response['data'] as $bc_option) {
+					if($bc_option['required']) {
+						error_log("Order #" . $item->get_order_id() . ": Mapped BC Product #{$bc_product_id} requires options but none were in the original order. Falling back.");
+						return null; // It has required options, so we must fall back.
+					}
+				}
+			}
 		}
+
 
 		$quantity = (int) $item->get_quantity();
 		if ($quantity === 0) return null;

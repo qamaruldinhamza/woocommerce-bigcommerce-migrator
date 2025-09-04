@@ -160,7 +160,6 @@ class WC_BC_Order_Processor {
 
 			$order_data = $this->prepare_order_data($wc_order);
 
-			// If there are no products (all fallbacks failed), mark as error.
 			if (empty($order_data['products'])) {
 				throw new Exception('Could not process any line items for this order. Check product mapping and data.');
 			}
@@ -200,7 +199,6 @@ class WC_BC_Order_Processor {
 
 	/**
 	 * Prepare complete order data for BigCommerce V2 API
-	 * FINAL CORRECTED VERSION: Uses 'external_source' to correctly bypass inventory for historical orders.
 	 */
 	private function prepare_order_data($wc_order) {
 		$bc_customer_id = 0;
@@ -235,7 +233,7 @@ class WC_BC_Order_Processor {
 			'staff_notes' => $staff_notes,
 			'customer_message' => $wc_order->get_customer_note(),
 			'discount_amount' => (float) $wc_order->get_discount_total(),
-			'external_source' => 'M-MIG', // CORRECT way to handle historical orders and stock
+			'external_source' => 'M-MIG',
 		);
 	}
 
@@ -288,15 +286,167 @@ class WC_BC_Order_Processor {
 		return array($shipping_address);
 	}
 
+	/**
+	 * NEW: Refactored and combined product logic into one function for robustness.
+	 */
 	private function prepare_v2_order_products($wc_order) {
 		$products = array();
 		foreach ($wc_order->get_items() as $item_id => $item) {
-			$line_item = $this->get_v2_line_item($item);
+			$line_item = $this->prepare_single_line_item($item);
 			if ($line_item) {
 				$products[] = $line_item;
 			}
 		}
 		return $products;
+	}
+
+	/**
+	 * NEW: This single function now handles all logic for processing a line item.
+	 * It checks for deleted products first, then attempts a full mapping, and falls back to a custom product if anything fails.
+	 */
+	private function prepare_single_line_item($item) {
+		global $wpdb;
+		$product_table = $wpdb->prefix . WC_BC_MIGRATOR_TABLE;
+
+		$quantity = (int) $item->get_quantity();
+		if ($quantity === 0) return null;
+
+		$wc_product_object = $item->get_product();
+
+		// SCENARIO 1: The product has been deleted from WooCommerce.
+		// Immediately create a custom product from the order item's historical data.
+		if (!is_object($wc_product_object)) {
+			error_log("Order #" . $item->get_order_id() . ": WC Product #" . $item->get_product_id() . " is deleted. Creating as custom product.");
+			return array(
+				'name'          => $item->get_name(),
+				'quantity'      => $quantity,
+				'price_ex_tax'  => (float) ($item->get_subtotal() / $quantity),
+				'price_inc_tax' => (float) ($item->get_total() / $quantity),
+				'sku'           => 'WC-DELETED-' . $item->get_product_id()
+			);
+		}
+
+		// SCENARIO 2: The product exists. Attempt to map it to a BigCommerce product.
+		$product_id = $item->get_product_id();
+		$variation_id = $item->get_variation_id();
+		$is_variation = $variation_id > 0;
+
+		$mapping = null;
+		if ($is_variation) {
+			$mapping = $wpdb->get_row($wpdb->prepare(
+				"SELECT bc_product_id FROM $product_table WHERE wc_product_id = %d AND wc_variation_id = %d AND status = 'success'",
+				$product_id, $variation_id
+			));
+		} else {
+			$mapping = $wpdb->get_row($wpdb->prepare(
+				"SELECT bc_product_id FROM $product_table WHERE wc_product_id = %d AND wc_variation_id IS NULL AND status = 'success'",
+				$product_id
+			));
+		}
+
+		// If no mapping exists in our table, fall back to a custom product.
+		if (!$mapping) {
+			error_log("Order #" . $item->get_order_id() . ": No mapping found for WC Product #" . $item->get_product_id() . ". Creating as custom product.");
+			return $this->create_fallback_product($item);
+		}
+
+		$bc_product_id = $mapping->bc_product_id;
+		$final_product_options = array();
+
+		// If it's a variation, we must correctly map all required options.
+		if ($is_variation) {
+			$options_result = $this->get_and_validate_product_options($wc_product_object, $bc_product_id, $item->get_order_id());
+
+			// If option validation fails, fall back to a custom product.
+			if ($options_result === null) {
+				return $this->create_fallback_product($item);
+			}
+			$final_product_options = $options_result;
+		}
+
+		// SCENARIO 3: Success! We have a mapped product and all required options.
+		return array(
+			'product_id'      => (int) $bc_product_id,
+			'quantity'        => $quantity,
+			'product_options' => $final_product_options,
+			'price_ex_tax'    => (float) ($item->get_subtotal() / $quantity),
+			'price_inc_tax'   => (float) ($item->get_total() / $quantity),
+		);
+	}
+
+	/**
+	 * NEW: Helper to create a fallback custom product payload.
+	 */
+	private function create_fallback_product($item) {
+		$product = $item->get_product(); // Re-fetch to get SKU if possible
+		$sku = is_object($product) ? $product->get_sku() : 'SKU-NOT-FOUND';
+		$clean_sku = preg_replace('/[^a-zA-Z0-9\-\_]/', '', $sku);
+		$sku_prefix = 'WC-' . ($item->get_variation_id() ?: $item->get_product_id());
+
+		$quantity = (int) $item->get_quantity();
+		if ($quantity === 0) return null;
+
+		return array(
+			'name'          => $item->get_name(),
+			'quantity'      => $quantity,
+			'price_ex_tax'  => (float) ($item->get_subtotal() / $quantity),
+			'price_inc_tax' => (float) ($item->get_total() / $quantity),
+			'sku'           => $sku_prefix . '-' . $clean_sku,
+		);
+	}
+
+	/**
+	 * NEW: Helper to get and validate options, driven by BigCommerce requirements.
+	 */
+	private function get_and_validate_product_options($wc_variation, $bc_product_id, $order_id) {
+		$mapped_options = array();
+		$wc_attributes = $wc_variation->get_attributes();
+
+		$bc_options_response = $this->bc_api->get_product_options($bc_product_id);
+		if (!isset($bc_options_response['data'])) {
+			error_log("Order #{$order_id}: Could not fetch options for BC Product #{$bc_product_id}. Cannot map options.");
+			return null;
+		}
+		$bc_options = $bc_options_response['data'];
+
+		// Create a simple map of the WooCommerce attributes for easy lookup.
+		$wc_attributes_map = array();
+		foreach ($wc_attributes as $taxonomy_slug => $value_slug) {
+			if (empty($value_slug)) continue;
+			$term = get_term_by('slug', $value_slug, 'pa_' . $taxonomy_slug);
+			if (!$term) continue;
+			$attribute_label = wc_attribute_label('pa_' . $taxonomy_slug);
+			$wc_attributes_map[strtolower(trim($attribute_label))] = $term->name;
+		}
+
+		// Loop through BigCommerce's options and try to satisfy them from our WooCommerce data.
+		foreach ($bc_options as $bc_option) {
+			$bc_option_name_lower = strtolower(trim($bc_option['display_name']));
+
+			if (isset($wc_attributes_map[$bc_option_name_lower])) {
+				$wc_value_name = $wc_attributes_map[$bc_option_name_lower];
+				$value_found = false;
+
+				foreach ($bc_option['option_values'] as $bc_option_value) {
+					if (strcasecmp(trim($bc_option_value['label']), trim($wc_value_name)) === 0) {
+						$mapped_options[] = array(
+							'product_option_id' => $bc_option['id'],
+							'value' => (string) $bc_option_value['id']
+						);
+						$value_found = true;
+						break;
+					}
+				}
+				if (!$value_found && $bc_option['required']) {
+					error_log("Order #{$order_id}: Mismatch for required option '{$bc_option['display_name']}'. WC value '{$wc_value_name}' not found in BC options.");
+					return null; // Mismatch on a required option, fail the mapping.
+				}
+			} elseif ($bc_option['required']) {
+				error_log("Order #{$order_id}: Missing required BC option '{$bc_option['display_name']}' for WC Product #" . $wc_variation->get_id() . ".");
+				return null; // A required BC option is missing from WC, fail the mapping.
+			}
+		}
+		return $mapped_options;
 	}
 
 	private function get_v2_line_item($item) {

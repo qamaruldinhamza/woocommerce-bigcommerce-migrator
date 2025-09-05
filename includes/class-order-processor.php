@@ -155,7 +155,7 @@ class WC_BC_Order_Processor {
 			// Check for an API error in the response
 			if ( isset( $result['error'] ) ) {
 				// If there's an error, throw an exception that includes the API response
-				throw new Exception( json_encode( $result['error'] ) );
+				throw new Exception( json_encode( $result ) );
 			}
 
 			if ( ! isset( $result['data']['id'] ) ) {
@@ -287,11 +287,6 @@ class WC_BC_Order_Processor {
 		return array( $shipping_address );
 	}
 
-	// --- START OF REFACTORED CODE ---
-
-	/**
-	 * Prepare V2 order products with robust fallbacks.
-	 */
 	private function prepare_v2_order_products($wc_order) {
 		$products = array();
 		foreach ($wc_order->get_items() as $item) {
@@ -303,100 +298,69 @@ class WC_BC_Order_Processor {
 		return $products;
 	}
 
-	/**
-	 * This is the master function for a single line item.
-	 * It checks for deleted products FIRST, then attempts a full mapping,
-	 * and falls back to a custom product if any part of the mapping fails.
-	 */
 	private function prepare_single_line_item($item) {
 		$wc_product_object = $item->get_product();
 
-		// SCENARIO 1: The product has been deleted from WooCommerce.
-		// Immediately create a custom product using historical data from the order item itself.
 		if (!is_object($wc_product_object)) {
 			error_log("Order #" . $item->get_order_id() . ": WC Product ID #" . $item->get_product_id() . " is deleted. Creating as custom product.");
 			return $this->create_fallback_product_payload($item);
 		}
 
-		// SCENARIO 2: The product exists. Attempt to map it.
 		$mapped_product_payload = $this->get_mapped_product_payload($item, $wc_product_object);
 
 		if ($mapped_product_payload) {
-			return $mapped_product_payload; // Success!
+			return $mapped_product_payload;
 		}
 
-		// SCENARIO 3: Mapping failed for a reason (no mapping, option mismatch, etc.).
-		// The helper functions will have logged the specific reason. Fall back to a custom product.
 		return $this->create_fallback_product_payload($item);
 	}
 
-	/**
-	 * Tries to create a payload for a fully mapped BigCommerce product.
-	 * Returns null on any failure, triggering the fallback.
-	 */
 	private function get_mapped_product_payload($item, $wc_product_object) {
 		global $wpdb;
 		$product_table = $wpdb->prefix . WC_BC_MIGRATOR_TABLE;
 
 		$product_id = $item->get_product_id();
 		$variation_id = $item->get_variation_id();
+		$is_variation = $variation_id > 0;
 
-		// THIS IS THE FIX: The original order item was for a simple product ($variation_id = 0)
-		// but we need to check if the MAPPED product in BigCommerce is now variable.
-		$is_simple_in_wc = $variation_id == 0;
+		$mapping_query = $is_variation
+			? $wpdb->prepare("SELECT bc_product_id FROM $product_table WHERE wc_product_id = %d AND wc_variation_id = %d AND status = 'success'", $product_id, $variation_id)
+			: $wpdb->prepare("SELECT bc_product_id FROM $product_table WHERE wc_product_id = %d AND wc_variation_id IS NULL AND status = 'success'", $product_id);
 
-		$query = $wpdb->prepare("SELECT bc_product_id, wc_variation_id FROM $product_table WHERE wc_product_id = %d AND status = 'success'", $product_id);
-		$mappings = $wpdb->get_results($query);
-
-		if (empty($mappings)) {
-			error_log("Order #" . $item->get_order_id() . ": No mapping found for WC Product #" . $product_id . ". Falling back.");
-			return null;
-		}
-
-		// If the original was a simple product, but we have multiple mappings (meaning it's now variable), we must fall back.
-		if ($is_simple_in_wc && count($mappings) > 1) {
-			error_log("Order #" . $item->get_order_id() . ": WC Product #{$product_id} was simple but is now variable in BC. Falling back.");
-			return null;
-		}
-
-		$mapping = null;
-		if ($is_simple_in_wc) {
-			$mapping = $mappings[0]; // Use the main product mapping
-		} else {
-			foreach($mappings as $map_row) {
-				if($map_row->wc_variation_id == $variation_id) {
-					$mapping = $map_row;
-					break;
-				}
-			}
-		}
+		$mapping = $wpdb->get_row($mapping_query);
 
 		if (!$mapping) {
-			error_log("Order #" . $item->get_order_id() . ": Could not find specific variation mapping for WC Product #" . $product_id . ". Falling back.");
+			error_log("Order #" . $item->get_order_id() . ": No mapping found for WC Product #" . $product_id . ". Falling back.");
 			return null;
 		}
 
 		$bc_product_id = $mapping->bc_product_id;
 		$final_product_options = [];
 
-		if ($variation_id > 0) {
-			$final_product_options = $this->get_validated_options($wc_product_object, $bc_product_id, $item->get_order_id());
-			if ($final_product_options === null) {
-				return null; // Option validation failed, trigger fallback.
-			}
-		} else {
-			// Even if it's a simple product in WC, check if the BC product has required options.
-			$bc_options_response = $this->bc_api->get_product_options($bc_product_id);
-			if(isset($bc_options_response['data']) && !empty($bc_options_response['data'])) {
-				foreach($bc_options_response['data'] as $bc_option) {
-					if($bc_option['required']) {
-						error_log("Order #" . $item->get_order_id() . ": Mapped BC Product #{$bc_product_id} requires options but none were in the original order. Falling back.");
-						return null; // It has required options, so we must fall back.
-					}
-				}
+		// THIS IS THE KEY LOGIC FIX
+		// Check if the BigCommerce product has required options.
+		$bc_options_response = $this->bc_api->get_product_options($bc_product_id);
+		$bc_options = isset($bc_options_response['data']) ? $bc_options_response['data'] : [];
+
+		$has_required_options = false;
+		foreach($bc_options as $bc_option) {
+			if ($bc_option['required']) {
+				$has_required_options = true;
+				break;
 			}
 		}
 
+		if ($is_variation) {
+			// If it's a variation, it MUST have its options mapped correctly.
+			$final_product_options = $this->get_validated_options($wc_product_object, $bc_product_id, $item->get_order_id(), $bc_options);
+			if ($final_product_options === null) {
+				return null; // Option validation failed, trigger fallback.
+			}
+		} elseif ($has_required_options) {
+			// If it was a SIMPLE product in WC, but the BC product now has REQUIRED options, we must fall back.
+			error_log("Order #" . $item->get_order_id() . ": WC simple product #" . $product_id . " maps to BC product #{$bc_product_id} which requires options. Falling back.");
+			return null;
+		}
 
 		$quantity = (int) $item->get_quantity();
 		if ($quantity === 0) return null;
@@ -410,22 +374,17 @@ class WC_BC_Order_Processor {
 		];
 	}
 
-	/**
-	 * Fetches options from BigCommerce and validates them against WooCommerce attributes.
-	 * Returns an array of options on success, or NULL on any failure.
-	 */
-	private function get_validated_options($wc_variation, $bc_product_id, $order_id) {
+	private function get_validated_options($wc_variation, $bc_product_id, $order_id, $bc_options) {
 		$wc_attributes = $wc_variation->get_attributes();
-
-		$bc_options_response = $this->bc_api->get_product_options($bc_product_id);
-
-		// If the BC product has no options, and the WC product has no attributes, it's a match.
-		if(!isset($bc_options_response['data']) || empty($bc_options_response['data'])) {
-			return empty($wc_attributes) ? [] : null;
+		if (empty($wc_attributes)) {
+			// If there are no attributes, but BC expects some, this is a failure.
+			foreach($bc_options as $bc_option) {
+				if ($bc_option['required']) return null;
+			}
+			return []; // No required options, so success.
 		}
-		$bc_options = $bc_options_response['data'];
 
-		$wc_attributes_map = [];
+		$wc_attributes_map = array();
 		foreach ($wc_attributes as $taxonomy => $value_slug) {
 			if(empty($value_slug)) continue;
 			$term = get_term_by('slug', $value_slug, $taxonomy);

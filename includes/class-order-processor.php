@@ -429,10 +429,26 @@ class WC_BC_Order_Processor {
 	 */
 	private function create_fallback_product_payload($item) {
 		$quantity = (int) $item->get_quantity();
-		if ($quantity === 0) return null;
+		if ($quantity === 0) {
+			return null;
+		}
+
+		// --- NEW SANITIZER LOGIC ---
+		$raw_name = $item->get_name();
+		// 1. Trim whitespace from start and end, and reduce multiple spaces to a single space.
+		$clean_name = trim(preg_replace('/\s+/', ' ', $raw_name));
+		$clean_name = str_replace(".", "", $clean_name);
+		$clean_name = str_replace("/", "", $clean_name);
+
+		// 2. Check for the exact duplication pattern and fix it.
+		$half_length = (int) (strlen($clean_name) / 2);
+		if (strlen($clean_name) > 10 && substr($clean_name, 0, $half_length) === substr($clean_name, $half_length)) {
+			$clean_name = substr($clean_name, 0, $half_length);
+		}
+		// --- END SANITIZER LOGIC ---
 
 		return array(
-			'name'          => $item->get_name(),
+			'name'          => $clean_name,
 			'quantity'      => $quantity,
 			'price_ex_tax'  => (float) ($item->get_subtotal() / $quantity),
 			'price_inc_tax' => (float) ($item->get_total() / $quantity),

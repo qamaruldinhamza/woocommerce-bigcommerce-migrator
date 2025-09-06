@@ -219,6 +219,18 @@ class WC_BC_REST_API {
 		));
 
 
+		add_action('wp_ajax_wc_bc_update_custom_fields_batch', function() {
+			check_ajax_referer('wc_bc_migrator_nonce', 'nonce');
+			$migrator = new WC_BC_Product_Migrator();
+			$batch_size = isset($_POST['batch_size']) ? intval($_POST['batch_size']) : 20;
+			$result = $migrator->update_custom_fields_batch($batch_size);
+			if (isset($result['error'])) {
+				wp_send_json_error(array('message' => $result['error']));
+			} else {
+				wp_send_json_success($result);
+			}
+		});
+
 	}
 
 	public function check_permission() {

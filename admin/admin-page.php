@@ -173,6 +173,16 @@ $client_secret = get_option('wc_bc_client_secret', '');
                         <button class="button button-secondary" id="view-failed-verifications">
                             <?php _e('View Failed Verifications', 'wc-bc-migrator'); ?>
                         </button>
+
+                        <hr style="margin: 15px 0;">
+                        <p><strong><?php _e('Post-Migration Tools', 'wc-bc-migrator'); ?></strong></p>
+                        <p><?php _e('Run this tool to hide internal custom fields (like wc_product_id) on the storefront by adding a "__" prefix.', 'wc-bc-migrator'); ?></p>
+                        <button class="button button-primary" id="update-custom-fields">
+                            <?php _e('Update Custom Field Names', 'wc-bc-migrator'); ?>
+                        </button>
+                        <div class="progress-bar" id="cf-update-progress-bar" style="display:none;">
+                            <div class="progress-fill" id="cf-update-progress-fill">0%</div>
+                        </div>
                     </div>
                 </div>
 

@@ -631,31 +631,31 @@ class WC_BC_Product_Migrator {
 	}
 
 	/**
-	 * Enhanced prepare_custom_fields with better validation
+	 * Enhanced prepare_custom_fields with better validation and prefixed names
 	 */
 	private function prepare_custom_fields($product) {
 		$custom_fields = array();
 
-		// Add WooCommerce product ID for reference
+		// Add WooCommerce product ID for reference with prefix
 		$custom_fields[] = array(
-			'name' => 'wc_product_id',
+			'name' => '__wc_product_id',
 			'value' => (string) $product->get_id()
 		);
 
-		// Add product tags as custom field with smart splitting
+		// Add product tags as custom field with prefix and smart splitting
 		$tags = wp_get_post_terms($product->get_id(), 'product_tag', array('fields' => 'names'));
 		if (!empty($tags) && is_array($tags) && !is_wp_error($tags)) {
 			$tags_string = implode(', ', $tags);
-			$tag_fields = $this->create_chunked_custom_fields('product_tags', $tags_string);
+			$tag_fields = $this->create_chunked_custom_fields('__product_tags', $tags_string);
 			$custom_fields = array_merge($custom_fields, $tag_fields);
 		}
 
-		// Add short description with smart splitting
+		// Add short description with prefix and smart splitting
 		$short_description = $product->get_short_description();
 		if ($short_description) {
 			$clean_description = strip_tags($short_description);
 			if (!empty(trim($clean_description))) {
-				$desc_fields = $this->create_chunked_custom_fields('short_description', $clean_description);
+				$desc_fields = $this->create_chunked_custom_fields('__short_description', $clean_description);
 				$custom_fields = array_merge($custom_fields, $desc_fields);
 			}
 		}
@@ -1380,6 +1380,87 @@ class WC_BC_Product_Migrator {
 			error_log("Error checking product name existence: " . $e->getMessage());
 			return false;
 		}
+	}
+
+	/**
+	 * Process a batch of products to update their custom field names.
+	 */
+	public function update_custom_fields_batch($batch_size = 20) {
+		global $wpdb;
+		$migrator_table = $wpdb->prefix . WC_BC_MIGRATOR_TABLE;
+
+		// Get products that are migrated but not yet updated
+		$products_to_update = $wpdb->get_results($wpdb->prepare(
+			"SELECT DISTINCT wc_product_id, bc_product_id 
+			 FROM $migrator_table 
+			 WHERE status = 'success' 
+			 AND wc_variation_id IS NULL
+			 AND (message NOT LIKE '%%Custom fields updated%%' OR message IS NULL)
+			 LIMIT %d",
+			$batch_size
+		));
+
+		if (empty($products_to_update)) {
+			return array('success' => true, 'message' => 'No products found requiring custom field updates.', 'processed' => 0);
+		}
+
+		$processed = 0;
+		$updated_count = 0;
+		$failed_count = 0;
+
+		foreach ($products_to_update as $product) {
+			try {
+				$bc_product_id = $product->bc_product_id;
+				$wc_product_id = $product->wc_product_id;
+
+				$custom_fields_response = $this->bc_api->get_product_custom_fields($bc_product_id);
+
+				if (isset($custom_fields_response['data'])) {
+					$fields_to_update = array(
+						'wc_product_id',
+						'product_tags',
+						'short_description'
+					);
+
+					foreach ($custom_fields_response['data'] as $field) {
+						$base_name = ltrim($field['name'], '_'); // Remove existing underscores for comparison
+						if (in_array($base_name, $fields_to_update) && substr($field['name'], 0, 2) !== '__') {
+
+							$new_name = '__' . $base_name;
+
+							// Update the custom field
+							$this->bc_api->update_product_custom_field($bc_product_id, $field['id'], array('name' => $new_name));
+
+							usleep(300000); // 0.3 second delay per update
+						}
+					}
+				}
+
+				// Mark as updated
+				WC_BC_Database::update_mapping($wc_product_id, null, array(
+					'message' => 'Product migrated successfully (Custom fields updated)'
+				));
+				$updated_count++;
+
+			} catch (Exception $e) {
+				WC_BC_Database::update_mapping($wc_product_id, null, array(
+					'message' => 'Failed to update custom fields: ' . $e->getMessage()
+				));
+				$failed_count++;
+			}
+			$processed++;
+		}
+
+		$remaining_query = "SELECT COUNT(DISTINCT wc_product_id) FROM $migrator_table WHERE status = 'success' AND wc_variation_id IS NULL AND (message NOT LIKE '%%Custom fields updated%%' OR message IS NULL)";
+		$remaining = $wpdb->get_var($remaining_query);
+
+		return array(
+			'success' => true,
+			'processed' => $processed,
+			'updated' => $updated_count,
+			'failed' => $failed_count,
+			'remaining' => $remaining
+		);
 	}
 
 

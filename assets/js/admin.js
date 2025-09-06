@@ -1449,4 +1449,55 @@
     });
 
 
+    $('#update-custom-fields').on('click', function() {
+        if (!confirm('Are you sure you want to update custom field names for all migrated products? This cannot be undone.')) {
+            return;
+        }
+
+        let logContainer = $('#verification-live-log');
+        let logEntries = $('#verification-log-entries');
+        logContainer.show();
+        logEntries.html('');
+
+        let progressBar = $('#cf-update-progress-bar');
+        let progressFill = $('#cf-update-progress-fill');
+        progressBar.show();
+
+        function updateCustomFieldsBatch() {
+            $.ajax({
+                url: wc_bc_migrator.ajax_url,
+                method: 'POST',
+                data: {
+                    action: 'wc_bc_update_custom_fields_batch',
+                    nonce: wc_bc_migrator.nonce,
+                    batch_size: 20
+                },
+                success: function(response) {
+                    if (response.success) {
+                        logEntries.prepend('<div class="log-entry success">Batch processed: ' + response.data.processed + ' products. Updated: ' + response.data.updated + ', Failed: ' + response.data.failed + '. Remaining: ' + response.data.remaining + '</div>');
+
+                        if (response.data.remaining > 0) {
+                            // Calculate progress
+                            let total = parseInt($('#stat-success').text()); // Get total successful products
+                            let progress = total > 0 ? ((total - response.data.remaining) / total) * 100 : 0;
+                            progressFill.css('width', progress + '%').text(Math.round(progress) + '%');
+
+                            updateCustomFieldsBatch(); // Process next batch
+                        } else {
+                            logEntries.prepend('<div class="log-entry success">All custom fields have been updated successfully!</div>');
+                            progressFill.css('width', '100%').text('100%');
+                        }
+                    } else {
+                        logEntries.prepend('<div class="log-entry error">Error: ' + response.data.message + '</div>');
+                    }
+                },
+                error: function() {
+                    logEntries.prepend('<div class="log-entry error">An unexpected error occurred. Please check the server logs.</div>');
+                }
+            });
+        }
+
+        updateCustomFieldsBatch();
+    });
+
 })(jQuery);

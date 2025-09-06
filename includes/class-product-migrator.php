@@ -858,7 +858,7 @@ class WC_BC_Product_Migrator {
 
 			if (!empty($cross_sell_skus)) {
 				$cross_sells_string = implode(',', $cross_sell_skus);
-				$cross_sell_fields = $this->create_chunked_custom_fields('cross_sell_products', $cross_sells_string, true);
+				$cross_sell_fields = $this->create_chunked_custom_fields('__cross_sell_products', $cross_sells_string, true);
 				$related_fields = array_merge($related_fields, $cross_sell_fields);
 			}
 		}
@@ -880,7 +880,7 @@ class WC_BC_Product_Migrator {
 
 			if (!empty($upsell_skus)) {
 				$upsells_string = implode(',', $upsell_skus);
-				$upsell_fields = $this->create_chunked_custom_fields('upsell_products', $upsells_string, true);
+				$upsell_fields = $this->create_chunked_custom_fields('__upsell_products', $upsells_string, true);
 				$related_fields = array_merge($related_fields, $upsell_fields);
 			}
 		}
@@ -1407,6 +1407,7 @@ class WC_BC_Product_Migrator {
 		$processed = 0;
 		$updated_count = 0;
 		$failed_count = 0;
+		$responses = array();
 
 		foreach ($products_to_update as $product) {
 			try {
@@ -1419,7 +1420,10 @@ class WC_BC_Product_Migrator {
 					$fields_to_update = array(
 						'wc_product_id',
 						'product_tags',
-						'short_description'
+						'short_description',
+						'upsell_products',
+						'cross_sell_products',
+						'weight_range_grams'
 					);
 
 					foreach ($custom_fields_response['data'] as $field) {
@@ -1429,7 +1433,7 @@ class WC_BC_Product_Migrator {
 							$new_name = '__' . $base_name;
 
 							// Update the custom field
-							$this->bc_api->update_product_custom_field($bc_product_id, $field['id'], array('name' => $new_name));
+							$responses[$bc_product_id][] = $this->bc_api->update_product_custom_field($bc_product_id, $field['id'], array('name' => $new_name));
 
 							usleep(300000); // 0.3 second delay per update
 						}

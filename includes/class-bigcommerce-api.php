@@ -439,7 +439,7 @@ class WC_BC_BigCommerce_API {
 	 * Get all custom fields for a specific product
 	 */
 	public function get_product_custom_fields($product_id) {
-		$endpoint = "products/{$product_id}/custom-fields";
+		$endpoint = "catalog/products/{$product_id}/custom-fields";
 		return $this->make_request($endpoint, 'GET', null, 'v3');
 	}
 
@@ -447,7 +447,7 @@ class WC_BC_BigCommerce_API {
 	 * Update a specific custom field for a product
 	 */
 	public function update_product_custom_field($product_id, $custom_field_id, $data) {
-		$endpoint = "products/{$product_id}/custom-fields/{$custom_field_id}";
+		$endpoint = "catalog/products/{$product_id}/custom-fields/{$custom_field_id}";
 		return $this->make_request($endpoint, 'PUT', $data, 'v3');
 	}
 }

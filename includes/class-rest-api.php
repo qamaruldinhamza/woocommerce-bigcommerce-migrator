@@ -218,18 +218,18 @@ class WC_BC_REST_API {
 			'permission_callback' => array($this, 'check_permission'),
 		));
 
-
-		add_action('wp_ajax_wc_bc_update_custom_fields_batch', function() {
-			check_ajax_referer('wc_bc_migrator_nonce', 'nonce');
-			$migrator = new WC_BC_Product_Migrator();
-			$batch_size = isset($_POST['batch_size']) ? intval($_POST['batch_size']) : 20;
-			$result = $migrator->update_custom_fields_batch($batch_size);
-			if (isset($result['error'])) {
-				wp_send_json_error(array('message' => $result['error']));
-			} else {
-				wp_send_json_success($result);
-			}
-		});
+		register_rest_route('wc-bc-migrator/v1', '/products/update-custom-fields', array(
+			'methods' => 'POST',
+			'callback' => array($this, 'update_custom_fields_batch'),
+			'permission_callback' => array($this, 'check_permission'),
+			'args' => array(
+				'batch_size' => array(
+					'required' => false,
+					'default' => 20,
+					'sanitize_callback' => 'absint',
+				),
+			),
+		));
 
 	}
 
@@ -413,6 +413,20 @@ class WC_BC_REST_API {
 			$verifier = new WC_BC_Product_Verification();
 			$result = $verifier->verify_and_update_weights($batch_size);
 
+			return new WP_REST_Response($result, 200);
+		} catch (Exception $e) {
+			return new WP_REST_Response(array(
+				'success' => false,
+				'message' => $e->getMessage()
+			), 500);
+		}
+	}
+
+	public function update_custom_fields_batch($request) {
+		$batch_size = $request->get_param('batch_size') ?: 20;
+		try {
+			$migrator = new WC_BC_Product_Migrator();
+			$result = $migrator->update_custom_fields_batch($batch_size);
 			return new WP_REST_Response($result, 200);
 		} catch (Exception $e) {
 			return new WP_REST_Response(array(

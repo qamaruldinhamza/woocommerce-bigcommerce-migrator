@@ -93,6 +93,7 @@ class WC_BC_Migrator {
 		wp_localize_script('wc-bc-migrator-admin', 'wcBcMigrator', array(
 			'apiUrl' => home_url('/wp-json/wc-bc-migrator/v1/'),
 			'nonce' => wp_create_nonce('wp_rest'),
+			'ajaxUrl' => admin_url('admin-ajax.php'),
 		));
 
 		wp_enqueue_style(

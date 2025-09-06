@@ -1448,51 +1448,65 @@
         }
     });
 
+    // Add this new event handler inside your existing (function($) { ... })(jQuery); block
 
     $('#update-custom-fields').on('click', function() {
         if (!confirm('Are you sure you want to update custom field names for all migrated products? This cannot be undone.')) {
             return;
         }
 
-        let logContainer = $('#verification-live-log');
-        let logEntries = $('#verification-log-entries');
+        var logContainer = $('#verification-live-log');
+        var logEntries = $('#verification-log-entries');
+        var button = $(this);
         logContainer.show();
         logEntries.html('');
+        button.prop('disabled', true);
 
-        let progressBar = $('#cf-update-progress-bar');
-        let progressFill = $('#cf-update-progress-fill');
+        var progressBar = $('#cf-update-progress-bar');
+        var progressFill = $('#cf-update-progress-fill');
         progressBar.show();
 
         function updateCustomFieldsBatch() {
             $.ajax({
-                url: wc_bc_migrator.ajax_url,
+                url: wcBcMigrator.apiUrl + 'products/update-custom-fields',
                 method: 'POST',
                 data: {
-                    action: 'wc_bc_update_custom_fields_batch',
-                    nonce: wc_bc_migrator.nonce,
                     batch_size: 20
+                },
+                beforeSend: function(xhr) {
+                    xhr.setRequestHeader('X-WP-Nonce', wcBcMigrator.nonce);
                 },
                 success: function(response) {
                     if (response.success) {
-                        logEntries.prepend('<div class="log-entry success">Batch processed: ' + response.data.processed + ' products. Updated: ' + response.data.updated + ', Failed: ' + response.data.failed + '. Remaining: ' + response.data.remaining + '</div>');
+                        logEntries.prepend('<div class="log-entry success">Batch processed: ' + response.processed + ' products. Updated: ' + response.updated + ', Failed: ' + response.failed + '. Remaining: ' + response.remaining + '</div>');
 
-                        if (response.data.remaining > 0) {
+                        if (response.remaining > 0 && response.processed > 0) {
                             // Calculate progress
-                            let total = parseInt($('#stat-success').text()); // Get total successful products
-                            let progress = total > 0 ? ((total - response.data.remaining) / total) * 100 : 0;
-                            progressFill.css('width', progress + '%').text(Math.round(progress) + '%');
+                            $.ajax({
+                                url: wcBcMigrator.apiUrl + 'migrate/stats',
+                                method: 'GET',
+                                beforeSend: function(xhr) { xhr.setRequestHeader('X-WP-Nonce', wcBcMigrator.nonce); },
+                                success: function(stats_response) {
+                                    let total = stats_response.success; // Total successfully migrated products
+                                    let progress = total > 0 ? ((total - response.remaining) / total) * 100 : 0;
+                                    progressFill.css('width', progress + '%').text(Math.round(progress) + '%');
+                                }
+                            });
 
                             updateCustomFieldsBatch(); // Process next batch
                         } else {
                             logEntries.prepend('<div class="log-entry success">All custom fields have been updated successfully!</div>');
                             progressFill.css('width', '100%').text('100%');
+                            button.prop('disabled', false);
                         }
                     } else {
-                        logEntries.prepend('<div class="log-entry error">Error: ' + response.data.message + '</div>');
+                        logEntries.prepend('<div class="log-entry error">Error: ' + response.message + '</div>');
+                        button.prop('disabled', false);
                     }
                 },
                 error: function() {
                     logEntries.prepend('<div class="log-entry error">An unexpected error occurred. Please check the server logs.</div>');
+                    button.prop('disabled', false);
                 }
             });
         }

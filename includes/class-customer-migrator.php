@@ -391,6 +391,7 @@ class WC_BC_Customer_Migrator {
 
 	/**
 	 * Prepare customer addresses for BigCommerce
+	 * CORRECTED: Sends the raw state code instead of the full state name.
 	 */
 	private function prepare_customer_addresses($wholesale_data, $billing_data, $shipping_data) {
 		$addresses = array();
@@ -405,7 +406,7 @@ class WC_BC_Customer_Migrator {
 				'address1' => $wholesale_data['address_1'],
 				'address2' => $wholesale_data['address_line_2'] ?? '',
 				'city' => $wholesale_data['city'] ?? '',
-				'state_or_province' => WC_BC_Location_Mapper::get_full_state_name($wholesale_data['state'] ?? '', $country_code),
+				'state_or_province' => $wholesale_data['state'] ?? '', // THIS IS THE FIX
 				'postal_code' => $wholesale_data['postcode'] ?? '',
 				'country_code' => $country_code,
 				'phone' => $wholesale_data['phone'] ?? '',
@@ -420,7 +421,7 @@ class WC_BC_Customer_Migrator {
 				'address1' => $billing_data['billing_address_1'],
 				'address2' => $billing_data['billing_address_2'] ?? '',
 				'city' => $billing_data['billing_city'] ?? '',
-				'state_or_province' => WC_BC_Location_Mapper::get_full_state_name($billing_data['billing_state'] ?? '', $country_code),
+				'state_or_province' => $billing_data['billing_state'] ?? '', // THIS IS THE FIX
 				'postal_code' => $billing_data['billing_postcode'] ?? '',
 				'country_code' => $country_code,
 				'phone' => $billing_data['billing_phone'] ?? '',
@@ -444,7 +445,7 @@ class WC_BC_Customer_Migrator {
 				'address1' => $shipping_data['shipping_address_1'],
 				'address2' => $shipping_data['shipping_address_2'] ?? '',
 				'city' => $shipping_data['shipping_city'] ?? '',
-				'state_or_province' => WC_BC_Location_Mapper::get_full_state_name($shipping_data['shipping_state'] ?? '', $country_code),
+				'state_or_province' => $shipping_data['shipping_state'] ?? '', // THIS IS THE FIX
 				'postal_code' => $shipping_data['shipping_postcode'] ?? '',
 				'country_code' => $country_code,
 				'address_type' => 'residential'

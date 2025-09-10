@@ -4,6 +4,139 @@
  * Uses WooCommerce's built-in location data for comprehensive country and state mapping
  */
 class WC_BC_Location_Mapper {
+	private static $bc_countries_data = null;
+
+	/**
+	 * Load BigCommerce countries data
+	 */
+	private static function load_bc_countries_data() {
+		if (self::$bc_countries_data === null) {
+			$json_file = WC_BC_MIGRATOR_PATH . 'includes/bigcommerce-countries.json';
+			if (file_exists($json_file)) {
+				$json_content = file_get_contents($json_file);
+				$data = json_decode($json_content, true);
+				self::$bc_countries_data = $data['data'] ?? [];
+			} else {
+				self::$bc_countries_data = [];
+			}
+		}
+		return self::$bc_countries_data;
+	}
+
+	/**
+	 * Get BigCommerce country info by country code
+	 */
+	public static function get_bc_country_info($country_code) {
+		$countries = self::load_bc_countries_data();
+
+		foreach ($countries as $country) {
+			if ($country['code'] === strtoupper($country_code)) {
+				return $country;
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Check if country requires states according to BigCommerce
+	 */
+	public static function bc_requires_state($country_code) {
+		$country = self::get_bc_country_info($country_code);
+		return $country ? $country['requiresState'] : false;
+	}
+
+	/**
+	 * Check if country has postal codes according to BigCommerce
+	 */
+	public static function bc_has_postal_codes($country_code) {
+		$country = self::get_bc_country_info($country_code);
+		return $country ? $country['hasPostalCodes'] : true;
+	}
+
+	/**
+	 * Get valid state name for BigCommerce using their subdivision data
+	 */
+	public static function get_bc_valid_state_name($state_input, $country_code) {
+		$country = self::get_bc_country_info($country_code);
+
+		if (!$country || empty($country['subdivisions'])) {
+			// No subdivisions defined, use input as-is for non-requiring countries
+			return self::bc_requires_state($country_code) ? null : $state_input;
+		}
+
+		// Try exact code match first
+		foreach ($country['subdivisions'] as $subdivision) {
+			if (strcasecmp($subdivision['code'], $state_input) === 0) {
+				return $subdivision['name'];
+			}
+		}
+
+		// Try name match
+		foreach ($country['subdivisions'] as $subdivision) {
+			if (strcasecmp($subdivision['name'], $state_input) === 0) {
+				return $subdivision['name'];
+			}
+		}
+
+		// If country requires state but we can't find it, return null
+		if (self::bc_requires_state($country_code)) {
+			return null;
+		}
+
+		// For countries that don't require states, return the input
+		return $state_input;
+	}
+
+	/**
+	 * Build validated address for BigCommerce
+	 */
+	public static function build_bc_validated_address($first_name, $last_name, $company, $address1, $address2, $city, $state, $postal_code, $country, $phone = '') {
+		$country_code = self::get_country_code($country);
+
+		if (!$country_code) {
+			error_log("Invalid country for address: {$country}");
+			return null;
+		}
+
+		// Get valid state name using BigCommerce data
+		$valid_state = self::get_bc_valid_state_name($state, $country_code);
+
+		// If country requires state but we don't have a valid one, skip this address
+		if (self::bc_requires_state($country_code) && !$valid_state) {
+			error_log("Skipping address - country {$country_code} requires state but '{$state}' is invalid");
+			return null;
+		}
+
+		$address = array(
+			'first_name' => $first_name,
+			'last_name' => $last_name,
+			'company' => $company,
+			'address1' => $address1,
+			'address2' => $address2,
+			'city' => $city,
+			'country_code' => $country_code,
+			'address_type' => 'residential'
+		);
+
+		// Add state only if valid
+		if ($valid_state) {
+			$address['state_or_province'] = $valid_state;
+		}
+
+		// Add postal code only if country uses them and we have one
+		if (self::bc_has_postal_codes($country_code) && !empty($postal_code)) {
+			$address['postal_code'] = $postal_code;
+		}
+
+		// Add phone if provided
+		if (!empty($phone)) {
+			$address['phone'] = $phone;
+		}
+
+		return $address;
+	}
+
 
 	/**
 	 * Convert country name/code to ISO country code using WooCommerce data

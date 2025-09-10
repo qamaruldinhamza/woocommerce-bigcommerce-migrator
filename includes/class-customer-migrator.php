@@ -472,67 +472,60 @@ class WC_BC_Customer_Migrator {
 
 		// Primary address from wholesale data or billing data
 		if (!empty($wholesale_data['address_1'])) {
-			$country_code = WC_BC_Location_Mapper::get_country_code($wholesale_data['country'] ?? '');
-			$state_name = WC_BC_Location_Mapper::get_full_state_name($wholesale_data['state'] ?? '', $country_code);
-
-			$primary_address = array(
-				'first_name' => $wholesale_data['first_name'] ?? '',
-				'last_name' => $wholesale_data['last_name'] ?? '',
-				'company' => $wholesale_data['company_name'] ?? '',
-				'address1' => $wholesale_data['address_1'],
-				'address2' => $wholesale_data['address_line_2'] ?? '',
-				'city' => $wholesale_data['city'] ?? '',
-				'state_or_province' => $state_name, // Use full state name
-				'postal_code' => $wholesale_data['postcode'] ?? '',
-				'country_code' => $country_code,
-				'phone' => $wholesale_data['phone'] ?? '',
-				'address_type' => 'residential'
+			$address = WC_BC_Location_Mapper::build_bc_validated_address(
+				$wholesale_data['first_name'] ?? '',
+				$wholesale_data['last_name'] ?? '',
+				$wholesale_data['company_name'] ?? '',
+				$wholesale_data['address_1'],
+				$wholesale_data['address_line_2'] ?? '',
+				$wholesale_data['city'] ?? '',
+				$wholesale_data['state'] ?? '',
+				$wholesale_data['postcode'] ?? '',
+				$wholesale_data['country'] ?? '',
+				$wholesale_data['phone'] ?? ''
 			);
+
+			if ($address) {
+				$addresses[] = $address;
+			}
 		} elseif (!empty($billing_data['billing_address_1'])) {
-			$country_code = WC_BC_Location_Mapper::get_country_code($billing_data['billing_country'] ?? '');
-			$state_name = WC_BC_Location_Mapper::get_full_state_name($billing_data['billing_state'] ?? '', $country_code);
-
-			$primary_address = array(
-				'first_name' => $billing_data['billing_first_name'] ?? '',
-				'last_name' => $billing_data['billing_last_name'] ?? '',
-				'company' => $billing_data['billing_company'] ?? '',
-				'address1' => $billing_data['billing_address_1'],
-				'address2' => $billing_data['billing_address_2'] ?? '',
-				'city' => $billing_data['billing_city'] ?? '',
-				'state_or_province' => $state_name, // Use full state name
-				'postal_code' => $billing_data['billing_postcode'] ?? '',
-				'country_code' => $country_code,
-				'phone' => $billing_data['billing_phone'] ?? '',
-				'address_type' => 'residential'
+			$address = WC_BC_Location_Mapper::build_bc_validated_address(
+				$billing_data['billing_first_name'] ?? '',
+				$billing_data['billing_last_name'] ?? '',
+				$billing_data['billing_company'] ?? '',
+				$billing_data['billing_address_1'],
+				$billing_data['billing_address_2'] ?? '',
+				$billing_data['billing_city'] ?? '',
+				$billing_data['billing_state'] ?? '',
+				$billing_data['billing_postcode'] ?? '',
+				$billing_data['billing_country'] ?? '',
+				$billing_data['billing_phone'] ?? ''
 			);
+
+			if ($address) {
+				$addresses[] = $address;
+			}
 		}
 
-		if (!empty($primary_address['address1'])) {
-			$addresses[] = $primary_address;
-		}
-
-		// Handle shipping address similarly
+		// Shipping address if different
 		if (!empty($shipping_data['shipping_address_1']) &&
 		    $shipping_data['shipping_address_1'] !== ($billing_data['billing_address_1'] ?? '')) {
 
-			$country_code = WC_BC_Location_Mapper::get_country_code($shipping_data['shipping_country'] ?? '');
-			$state_name = WC_BC_Location_Mapper::get_full_state_name($shipping_data['shipping_state'] ?? '', $country_code);
-
-			$shipping_address = array(
-				'first_name' => $shipping_data['shipping_first_name'] ?? '',
-				'last_name' => $shipping_data['shipping_last_name'] ?? '',
-				'company' => $shipping_data['shipping_company'] ?? '',
-				'address1' => $shipping_data['shipping_address_1'],
-				'address2' => $shipping_data['shipping_address_2'] ?? '',
-				'city' => $shipping_data['shipping_city'] ?? '',
-				'state_or_province' => $state_name, // Use full state name
-				'postal_code' => $shipping_data['shipping_postcode'] ?? '',
-				'country_code' => $country_code,
-				'address_type' => 'residential'
+			$address = WC_BC_Location_Mapper::build_bc_validated_address(
+				$shipping_data['shipping_first_name'] ?? '',
+				$shipping_data['shipping_last_name'] ?? '',
+				$shipping_data['shipping_company'] ?? '',
+				$shipping_data['shipping_address_1'],
+				$shipping_data['shipping_address_2'] ?? '',
+				$shipping_data['shipping_city'] ?? '',
+				$shipping_data['shipping_state'] ?? '',
+				$shipping_data['shipping_postcode'] ?? '',
+				$shipping_data['shipping_country'] ?? '',
+				''
 			);
 
-			if (!empty($shipping_address['address1'])) {
-				$addresses[] = $shipping_address;
+			if ($address) {
+				$addresses[] = $address;
 			}
 		}
 

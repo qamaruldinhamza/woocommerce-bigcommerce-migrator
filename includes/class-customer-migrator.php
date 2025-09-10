@@ -547,11 +547,11 @@ class WC_BC_Customer_Migrator {
 
 		// Primary form fields mapping using exact field names
 		$field_mapping = array(
-			'Position/Title in Company' => $wholesale_data['position_title'] ?? '',
-			'Primary Business' => $wholesale_data['primary_business'] ?? '',
-			'Business ID Type' => $wholesale_data['business_id_type'] ?? '',
-			'Business ID Number' => $wholesale_data['business_id_number'] ?? '',
-			'Company Website' => $wholesale_data['company_website'] ?? '',
+			'Position/Title in Company' => $wholesale_data['position_title'] ?? 'No Title',
+			'Primary Business' => $wholesale_data['primary_business'] ?? 'Other',
+			'Business ID Type' => $wholesale_data['business_id_type'] ?? 'VAT',
+			'Business ID Number' => $wholesale_data['business_id_number'] ?? '000',
+			'Company Website' => $wholesale_data['company_website'] ?? 'no-website',
 		);
 
 		// Add dynamic fields if they exist

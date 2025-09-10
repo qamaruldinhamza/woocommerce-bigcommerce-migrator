@@ -326,47 +326,55 @@ class WC_BC_Order_Processor {
 		$cleaned_state = trim($state);
 		$cleaned_zip = trim($zip);
 
-		// Handle cases where state got mixed into ZIP field
-		if (empty($cleaned_state) && !empty($cleaned_zip)) {
-			// Check if ZIP contains state code (like "TX 78212")
+		// Get WooCommerce locale information for this country
+		$address_format = WC_BC_Location_Mapper::get_address_format($country_code);
+
+		// Handle cases where state got mixed into ZIP field (US specific)
+		if (empty($cleaned_state) && !empty($cleaned_zip) && $country_code === 'US') {
 			if (preg_match('/^([A-Z]{2})\s+(.+)$/', $cleaned_zip, $matches)) {
 				$potential_state = $matches[1];
 				$potential_zip = $matches[2];
 
-				// Validate if it's a real state for this country
-				if ($country_code === 'US') {
-					$us_states = array(
-						'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
-						'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD',
-						'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ',
-						'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC',
-						'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY',
-						'DC'
-					);
-
-					if (in_array($potential_state, $us_states)) {
-						$cleaned_state = $potential_state;
-						$cleaned_zip = $potential_zip;
-						error_log("Fixed mixed state/zip: extracted state '{$potential_state}' from zip field '{$zip}'");
-					}
+				// Validate using WooCommerce state data
+				$us_states = WC()->countries->get_states('US');
+				if (isset($us_states[$potential_state])) {
+					$cleaned_state = $potential_state;
+					$cleaned_zip = $potential_zip;
+					error_log("Fixed mixed state/zip: extracted state '{$potential_state}' from zip field");
 				}
 			}
 		}
 
-		// If state is still empty and country requires it, set a default
-		if (empty($cleaned_state) && WC_BC_Location_Mapper::country_has_states($country_code)) {
-			if ($country_code === 'US') {
-				// Try to guess state from ZIP code for US
+		// Handle missing postal codes based on WooCommerce locale requirements
+		if (empty($cleaned_zip)) {
+			if (!$address_format['postcode_required']) {
+				$cleaned_zip = ''; // Keep empty for countries that don't require postal codes
+				error_log("Postal code not required for country '{$country_code}', keeping empty");
+			} else {
+				// Use a country-appropriate default
+				$cleaned_zip = $this->get_default_postcode($country_code);
+				error_log("Set default postal code '{$cleaned_zip}' for country '{$country_code}'");
+			}
+		}
+
+		// Handle missing states using WooCommerce state data
+		if (empty($cleaned_state) && $address_format['state_required']) {
+			if ($country_code === 'US' && !empty($cleaned_zip)) {
 				$guessed_state = $this->guess_us_state_from_zip($cleaned_zip);
 				if ($guessed_state) {
-					$cleaned_state = $guessed_state;
-					error_log("Guessed US state '{$guessed_state}' from ZIP '{$cleaned_zip}'");
-				} else {
-					$cleaned_state = 'Unknown';
-					error_log("Could not determine state for US ZIP '{$cleaned_zip}', using 'Unknown'");
+					// Validate the guessed state exists in WooCommerce
+					$us_states = WC()->countries->get_states('US');
+					if (isset($us_states[$guessed_state])) {
+						$cleaned_state = $guessed_state;
+						error_log("Guessed and validated US state '{$guessed_state}' from ZIP '{$cleaned_zip}'");
+					}
 				}
-			} else {
-				$cleaned_state = 'Unknown';
+			}
+
+			// If still no state and it's required, use a default
+			if (empty($cleaned_state)) {
+				$cleaned_state = 'N/A';
+				error_log("Set default state 'N/A' for country '{$country_code}' with missing required state");
 			}
 		}
 
@@ -374,6 +382,55 @@ class WC_BC_Order_Processor {
 			'state' => $cleaned_state,
 			'zip' => $cleaned_zip
 		);
+	}
+
+// Helper method for country-specific default postal codes
+	private function get_default_postcode($country_code) {
+		$defaults = array(
+			'US' => '00000',
+			'CA' => 'A0A 0A0',
+			'GB' => 'SW1A 1AA',
+			'AU' => '0000',
+			'DE' => '00000',
+			'FR' => '00000',
+			'IT' => '00000',
+			'ES' => '00000',
+			'NL' => '0000 AA',
+			'BE' => '0000',
+			'CH' => '0000',
+			'AT' => '0000',
+			'SE' => '000 00',
+			'NO' => '0000',
+			'DK' => '0000',
+			'FI' => '00000',
+			'JP' => '000-0000',
+			'KR' => '00000',
+			'CN' => '000000',
+			'IN' => '000000',
+			'BR' => '00000-000',
+			'MX' => '00000',
+			'RU' => '000000',
+			'ZA' => '0000',
+			'PL' => '00-000',
+			'CZ' => '000 00',
+			'HU' => '0000',
+			'PT' => '0000-000',
+			'GR' => '000 00',
+			'TR' => '00000',
+			'IL' => '0000000',
+			'AE' => '00000',
+			'SA' => '00000',
+			'EG' => '00000',
+			'NG' => '000000',
+			'KE' => '00000',
+			'GH' => 'GA-000-0000',
+			'MA' => '00000',
+			'TN' => '0000',
+			'DZ' => '00000',
+			'LY' => '00000'
+		);
+
+		return isset($defaults[$country_code]) ? $defaults[$country_code] : '00000';
 	}
 
 // Add this helper method for US state guessing

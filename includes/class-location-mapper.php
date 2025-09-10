@@ -184,45 +184,63 @@ class WC_BC_Location_Mapper {
 			return '';
 		}
 
-		// Manual fixes for common legacy codes before lookup
-		if (strtoupper($country_code) === 'UK') {
-			$country_code = 'GB';
-		}
-
-		// Get the standard name from WooCommerce
+		// Use WooCommerce's country data as the primary source
 		$countries = WC()->countries->get_countries();
 		$wc_country_name = $countries[strtoupper($country_code)] ?? '';
 
 		if (empty($wc_country_name)) {
-			return ''; // Invalid code, return empty to be handled by the caller
+			return '';
 		}
 
-		// Mapping for names that are known to differ between WooCommerce and BigCommerce
-		$name_map = array(
-			'United States (US)' => 'United States',
-			'United Kingdom (UK)' => 'United Kingdom',
-			'Côte d\'Ivoire' => 'Ivory Coast', // WooCommerce uses this
+		// Only override specific known differences between WC and BC
+		$bc_overrides = array(
+			'Côte d\'Ivoire' => 'Ivory Coast',
 			'Korea, Republic of' => 'South Korea',
-			'Korea, Democratic People\'s Republic of' => 'North Korea',
 			'Russian Federation' => 'Russia',
 			'Syrian Arab Republic' => 'Syria',
 			'Iran, Islamic Republic of' => 'Iran',
-			'Venezuela, Bolivarian Republic of' => 'Venezuela',
-			'Bolivia, Plurinational State of' => 'Bolivia',
-			'Congo, Democratic Republic of the' => 'Democratic Republic of the Congo',
-			'Congo' => 'Republic of the Congo',
-			'Macedonia, Republic of North' => 'North Macedonia',
-			'Moldova, Republic of' => 'Moldova',
-			'Tanzania, United Republic of' => 'Tanzania',
-			'Virgin Islands, British' => 'British Virgin Islands',
-			'Virgin Islands, U.S.' => 'United States Virgin Islands',
-			'Palestinian Territory, Occupied' => 'Palestine',
-			'Lao People\'s Democratic Republic' => 'Laos',
-			'Brunei Darussalam' => 'Brunei',
-			'Myanmar' => 'Burma (Myanmar)',
+			'Venezuela, Bolivarian Republic of' => 'Venezuela'
 		);
 
-		// Return the mapped name if it exists, otherwise return the standard WC name
-		return $name_map[$wc_country_name] ?? $wc_country_name;
+		return $bc_overrides[$wc_country_name] ?? $wc_country_name;
 	}
+
+	// Add this method to WC_BC_Location_Mapper class
+	public static function get_wc_locale_data($country_code) {
+		$locale = WC()->countries->get_country_locale();
+		$country_code = strtoupper($country_code);
+
+		return isset($locale[$country_code]) ? $locale[$country_code] : array();
+	}
+
+// Enhanced method using WooCommerce locale data
+	public static function is_postal_code_required($country_code) {
+		$locale_data = self::get_wc_locale_data($country_code);
+
+		// Check WooCommerce locale data for postcode requirements
+		if (isset($locale_data['postcode']['required'])) {
+			return $locale_data['postcode']['required'] !== false;
+		}
+
+		// Check if postcode is hidden (means not required)
+		if (isset($locale_data['postcode']['hidden'])) {
+			return !$locale_data['postcode']['hidden'];
+		}
+
+		// Default to required for most countries
+		return true;
+	}
+
+	public static function get_address_format($country_code) {
+		$locale_data = self::get_wc_locale_data($country_code);
+		$countries = WC()->countries;
+
+		return array(
+			'postcode_required' => self::is_postal_code_required($country_code),
+			'state_required' => !empty($countries->get_states($country_code)),
+			'has_states' => !empty($countries->get_states($country_code)),
+			'locale_data' => $locale_data
+		);
+	}
+
 }

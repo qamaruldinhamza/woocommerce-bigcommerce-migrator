@@ -10,8 +10,8 @@ class WC_BC_Batch_Processor {
 		$table_name = $wpdb->prefix . WC_BC_MIGRATOR_TABLE;
 
 		// Set memory and time limits
-		ini_set('memory_limit', '1080M');
-		set_time_limit(300); // 5 minutes
+		//ini_set('memory_limit', '1080M');
+		set_time_limit(600); // 5 minutes
 
 		try {
 			// Process products in smaller batches to avoid memory issues

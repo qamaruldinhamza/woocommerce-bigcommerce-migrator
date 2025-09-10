@@ -7,6 +7,7 @@ class WC_BC_Batch_Processor {
 
 	public function prepare_products() {
 		global $wpdb;
+		$table_name = $wpdb->prefix . WC_BC_MIGRATOR_TABLE;
 
 		// Get all WooCommerce products
 		$args = array(
@@ -25,9 +26,14 @@ class WC_BC_Batch_Processor {
 			$product = wc_get_product($product_id);
 
 			if ($product->is_type('variable')) {
-				// Insert parent product
-				$existing = $this->check_existing_mapping($product_id, null);
-				if (!$existing) {
+				// Check if parent product exists in mapping table
+				$parent_exists = $wpdb->get_var($wpdb->prepare(
+					"SELECT id FROM $table_name WHERE wc_product_id = %d AND wc_variation_id IS NULL",
+					$product_id
+				));
+
+				if (!$parent_exists) {
+					// Insert parent product
 					WC_BC_Database::insert_mapping(array(
 						'wc_product_id' => $product_id,
 						'wc_variation_id' => null,
@@ -38,11 +44,16 @@ class WC_BC_Batch_Processor {
 					$skipped++;
 				}
 
-				// Insert variations
+				// Handle variations - only insert new ones
 				$variations = $product->get_children();
 				foreach ($variations as $variation_id) {
-					$existing = $this->check_existing_mapping($product_id, $variation_id);
-					if (!$existing) {
+					$variation_exists = $wpdb->get_var($wpdb->prepare(
+						"SELECT id FROM $table_name WHERE wc_product_id = %d AND wc_variation_id = %d",
+						$product_id,
+						$variation_id
+					));
+
+					if (!$variation_exists) {
 						WC_BC_Database::insert_mapping(array(
 							'wc_product_id' => $product_id,
 							'wc_variation_id' => $variation_id,
@@ -54,9 +65,13 @@ class WC_BC_Batch_Processor {
 					}
 				}
 			} else {
-				// Simple product
-				$existing = $this->check_existing_mapping($product_id, null);
-				if (!$existing) {
+				// Simple product - check if it exists
+				$simple_exists = $wpdb->get_var($wpdb->prepare(
+					"SELECT id FROM $table_name WHERE wc_product_id = %d AND wc_variation_id IS NULL",
+					$product_id
+				));
+
+				if (!$simple_exists) {
 					WC_BC_Database::insert_mapping(array(
 						'wc_product_id' => $product_id,
 						'wc_variation_id' => null,

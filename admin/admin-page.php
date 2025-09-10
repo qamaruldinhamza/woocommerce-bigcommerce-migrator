@@ -115,12 +115,13 @@ $client_secret = get_option('wc_bc_client_secret', '');
                         </div>
                     </div>
 
-                    <!-- Add sync log container -->
-                    <div class="log-container" id="sync-live-log" style="display: none;">
-                        <h3><?php _e('Sync Progress', 'wc-bc-migrator'); ?></h3>
-                        <div id="sync-log-entries"></div>
-                    </div>
 				</div>
+
+                <!-- Add sync log container -->
+                <div class="log-container" id="sync-live-log" style="display: none;">
+                    <h3><?php _e('Sync Progress', 'wc-bc-migrator'); ?></h3>
+                    <div id="sync-log-entries"></div>
+                </div>
 
 				<!-- Live Log -->
 				<div class="log-container" id="live-log" style="display: none;">

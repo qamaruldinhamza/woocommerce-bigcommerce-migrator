@@ -447,19 +447,14 @@ class WC_BC_Order_Processor {
 		return $this->create_fallback_product_payload($item);
 	}
 
-	/**
-	 * Tries to create a payload for a fully mapped BigCommerce product.
-	 * Returns null on any failure, triggering the fallback.
-	 */
 	private function get_mapped_product_payload($item, $wc_product_object) {
 		global $wpdb;
 		$product_table = $wpdb->prefix . WC_BC_MIGRATOR_TABLE;
 
 		$product_id = $item->get_product_id();
 		$variation_id = $item->get_variation_id();
+		$target_unit_price = $item->get_quantity() > 0 ? ($item->get_total() / $item->get_quantity()) : 0;
 
-		// THIS IS THE FIX: The original order item was for a simple product ($variation_id = 0)
-		// but we need to check if the MAPPED product in BigCommerce is now variable.
 		$is_simple_in_wc = $variation_id == 0;
 
 		$query = $wpdb->prepare("SELECT bc_product_id, wc_variation_id FROM $product_table WHERE wc_product_id = %d AND status = 'success'", $product_id);
@@ -470,7 +465,6 @@ class WC_BC_Order_Processor {
 			return null;
 		}
 
-		// If the original was a simple product, but we have multiple mappings (meaning it's now variable), we must fall back.
 		if ($is_simple_in_wc && count($mappings) > 1) {
 			error_log("Order #" . $item->get_order_id() . ": WC Product #{$product_id} was simple but is now variable in BC. Falling back.");
 			return null;
@@ -478,7 +472,7 @@ class WC_BC_Order_Processor {
 
 		$mapping = null;
 		if ($is_simple_in_wc) {
-			$mapping = $mappings[0]; // Use the main product mapping
+			$mapping = $mappings[0];
 		} else {
 			foreach($mappings as $map_row) {
 				if($map_row->wc_variation_id == $variation_id) {
@@ -495,43 +489,59 @@ class WC_BC_Order_Processor {
 
 		$bc_product_id = $mapping->bc_product_id;
 		$final_product_options = [];
+		$needs_options = false;
 
 		if ($variation_id > 0) {
-			$final_product_options = $this->get_validated_options($wc_product_object, $bc_product_id, $item->get_order_id());
+			$final_product_options = $this->get_validated_options(
+				$wc_product_object,
+				$bc_product_id,
+				$item->get_order_id(),
+				$target_unit_price
+			);
 			if ($final_product_options === null) {
 				return null; // Option validation failed, trigger fallback.
 			}
+			$needs_options = true;
 		} else {
-			// Even if it's a simple product in WC, check if the BC product has required options.
+			// Check if BC product has required options for simple products
 			$bc_options_response = $this->bc_api->get_product_options($bc_product_id);
 			if(isset($bc_options_response['data']) && !empty($bc_options_response['data'])) {
 				foreach($bc_options_response['data'] as $bc_option) {
 					if($bc_option['required']) {
 						error_log("Order #" . $item->get_order_id() . ": Mapped BC Product #{$bc_product_id} requires options but none were in the original order. Falling back.");
-						return null; // It has required options, so we must fall back.
+						return null;
 					}
+				}
+				// Product has optional options, so we should include empty options array
+				if (!empty($bc_options_response['data'])) {
+					$needs_options = true;
 				}
 			}
 		}
 
-
 		$quantity = (int) $item->get_quantity();
 		if ($quantity === 0) return null;
 
-		return [
+		// Build the product array once
+		$product_array = [
 			'product_id'      => (int) $bc_product_id,
 			'quantity'        => $quantity,
-			'product_options' => $final_product_options,
-			'price_ex_tax'    => (float) ($item->get_subtotal() / $quantity),
-			'price_inc_tax'   => (float) ($item->get_total() / $quantity),
+			'price_ex_tax'    => (float) $target_unit_price,
+			'price_inc_tax'   => (float) $target_unit_price,
 		];
+
+		// Only add product_options if the product actually has options defined
+		if ($needs_options) {
+			$product_array['product_options'] = $final_product_options;
+		}
+
+		return $product_array;
 	}
 
 	/**
-	 * Fetches options from BigCommerce and validates them against WooCommerce attributes.
-	 * Returns an array of options on success, or NULL on any failure.
+	 * Enhanced version that handles invalid options with fallbacks
 	 */
-	private function get_validated_options($wc_variation, $bc_product_id, $order_id) {
+	private function get_validated_options($wc_variation, $bc_product_id, $order_id, $target_price = null) {
 		$wc_attributes = $wc_variation->get_attributes();
 
 		$bc_options_response = $this->bc_api->get_product_options($bc_product_id);
@@ -552,6 +562,8 @@ class WC_BC_Order_Processor {
 		}
 
 		$mapped_options = [];
+		$failed_mappings = [];
+
 		foreach ($bc_options as $bc_option) {
 			$bc_option_name_lower = strtolower(trim($bc_option['display_name']));
 
@@ -569,17 +581,111 @@ class WC_BC_Order_Processor {
 						break;
 					}
 				}
-				if (!$value_found && $bc_option['required']) {
-					error_log("Order #{$order_id}: Mismatch for required option '{$bc_option['display_name']}'. WC value '{$wc_value_name}' not found in BC options.");
-					return null;
+
+				if (!$value_found) {
+					$failed_mappings[] = array(
+						'option_name' => $bc_option['display_name'],
+						'wc_value' => $wc_value_name,
+						'bc_option' => $bc_option,
+						'required' => $bc_option['required']
+					);
 				}
 			} elseif ($bc_option['required']) {
-				error_log("Order #{$order_id}: Missing required BC option '{$bc_option['display_name']}' for WC Product #" . $wc_variation->get_id() . ".");
-				return null;
+				$failed_mappings[] = array(
+					'option_name' => $bc_option['display_name'],
+					'wc_value' => 'missing',
+					'bc_option' => $bc_option,
+					'required' => true
+				);
 			}
 		}
 
+		// If we have failed mappings, try to resolve them
+		if (!empty($failed_mappings)) {
+			$resolved_options = $this->resolve_failed_option_mappings($failed_mappings, $target_price, $order_id, $bc_product_id);
+
+			if ($resolved_options === null) {
+				// Could not resolve required options
+				error_log("Order #{$order_id}: Could not resolve required options for BC Product #{$bc_product_id}");
+				return null;
+			}
+
+			$mapped_options = array_merge($mapped_options, $resolved_options);
+		}
+
 		return $mapped_options;
+	}
+
+	/**
+	 * Try to resolve failed option mappings with fallback strategies
+	 */
+	private function resolve_failed_option_mappings($failed_mappings, $target_price, $order_id, $bc_product_id) {
+		$resolved_options = [];
+
+		foreach ($failed_mappings as $failed_mapping) {
+			$bc_option = $failed_mapping['bc_option'];
+			$resolved_value = null;
+
+			// Strategy 1: Try to find closest match by name similarity
+			if ($failed_mapping['wc_value'] !== 'missing') {
+				$resolved_value = $this->find_closest_option_value($failed_mapping['wc_value'], $bc_option['option_values']);
+			}
+
+			// Strategy 2: If price is provided, try to find value that gives closest price match
+			if (!$resolved_value && $target_price) {
+				$resolved_value = $this->find_price_matching_option_value($bc_product_id, $bc_option, $target_price);
+			}
+
+			// Strategy 3: Use the first available option value (fallback)
+			if (!$resolved_value && !empty($bc_option['option_values'])) {
+				$resolved_value = $bc_option['option_values'][0];
+				error_log("Order #{$order_id}: Using fallback option value '{$resolved_value['label']}' for option '{$bc_option['display_name']}'");
+			}
+
+			// Strategy 4: If it's required and we still don't have a value, fail
+			if (!$resolved_value && $bc_option['required']) {
+				error_log("Order #{$order_id}: Cannot resolve required option '{$bc_option['display_name']}'");
+				return null;
+			}
+
+			if ($resolved_value) {
+				$resolved_options[] = [
+					'id' => $bc_option['id'],
+					'value' => (string) $resolved_value['id']
+				];
+			}
+		}
+
+		return $resolved_options;
+	}
+
+	/**
+	 * Find the closest option value by name similarity
+	 */
+	private function find_closest_option_value($target_value, $option_values) {
+		$best_match = null;
+		$best_similarity = 0;
+
+		foreach ($option_values as $option_value) {
+			$similarity = 0;
+			similar_text(strtolower($target_value), strtolower($option_value['label']), $similarity);
+
+			if ($similarity > $best_similarity && $similarity > 70) { // 70% similarity threshold
+				$best_similarity = $similarity;
+				$best_match = $option_value;
+			}
+		}
+
+		return $best_match;
+	}
+
+	/**
+	 * Try to find option value that results in a price closest to target
+	 */
+	private function find_price_matching_option_value($bc_product_id, $bc_option, $target_price) {
+		// This would require checking variant prices for each option value
+		// For now, return first available value as a simple fallback
+		return !empty($bc_option['option_values']) ? $bc_option['option_values'][0] : null;
 	}
 
 	/**

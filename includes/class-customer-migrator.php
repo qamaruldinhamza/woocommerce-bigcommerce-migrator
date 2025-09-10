@@ -168,17 +168,21 @@ class WC_BC_Customer_Migrator {
 	private function prepare_customer_data($user) {
 		$customer_type = $this->get_customer_type($user);
 
+		// Get first and last name with fallbacks
+		$first_name = $this->get_safe_first_name($user);
+		$last_name = $this->get_safe_last_name($user);
+
 		// Base customer data
 		$customer_data = array(
 			'email' => $user->user_email,
-			'first_name' => $user->first_name ?: '',
-			'last_name' => $user->last_name ?: '',
+			'first_name' => $first_name,
+			'last_name' => $last_name,
 			'customer_group_id' => $this->customer_group_mapping[$customer_type],
-			'notes' => 'Migrated from WooCommerce. Original role: ' . implode(', ', $user->roles), // Add notes
-			'accepts_product_review_abandoned_cart_emails' => true, // Optional: enable email marketing
-			'trigger_account_created_notification' => false, // Don't send welcome email during migration
-			'origin_channel_id' => 1, // Usually 1 for main storefront
-			'channel_ids' => array(1) // Array of channel IDs
+			'notes' => 'Migrated from WooCommerce. Original role: ' . implode(', ', $user->roles),
+			'accepts_product_review_abandoned_cart_emails' => true,
+			'trigger_account_created_notification' => false,
+			'origin_channel_id' => 1,
+			'channel_ids' => array(1)
 		);
 
 		if (empty($customer_data['email'])) {
@@ -230,6 +234,76 @@ class WC_BC_Customer_Migrator {
 		);
 
 		return $customer_data;
+	}
+
+	/**
+	 * Get a safe first name with fallbacks
+	 */
+	private function get_safe_first_name($user) {
+		// Try user's first name
+		if (!empty($user->first_name)) {
+			return $user->first_name;
+		}
+
+		// Try billing first name
+		$billing_first_name = get_user_meta($user->ID, 'billing_first_name', true);
+		if (!empty($billing_first_name)) {
+			return $billing_first_name;
+		}
+
+		// Try wholesale first name
+		$wholesale_first_name = get_user_meta($user->ID, 'first_name', true);
+		if (!empty($wholesale_first_name)) {
+			return $wholesale_first_name;
+		}
+
+		// Extract from email as last resort
+		$email_parts = explode('@', $user->user_email);
+		if (!empty($email_parts[0])) {
+			$email_prefix = $email_parts[0];
+			// Remove numbers and special characters, capitalize
+			$cleaned = preg_replace('/[^a-zA-Z]/', '', $email_prefix);
+			if (!empty($cleaned)) {
+				return ucfirst(strtolower($cleaned));
+			}
+		}
+
+		// Ultimate fallback
+		return 'Customer';
+	}
+
+	/**
+	 * Get a safe last name with fallbacks
+	 */
+	private function get_safe_last_name($user) {
+		// Try user's last name
+		if (!empty($user->last_name)) {
+			return $user->last_name;
+		}
+
+		// Try billing last name
+		$billing_last_name = get_user_meta($user->ID, 'billing_last_name', true);
+		if (!empty($billing_last_name)) {
+			return $billing_last_name;
+		}
+
+		// Try wholesale last name
+		$wholesale_last_name = get_user_meta($user->ID, 'last_name', true);
+		if (!empty($wholesale_last_name)) {
+			return $wholesale_last_name;
+		}
+
+		// Extract domain from email or use default
+		$email_parts = explode('@', $user->user_email);
+		if (!empty($email_parts[1])) {
+			$domain_parts = explode('.', $email_parts[1]);
+			if (!empty($domain_parts[0])) {
+				return ucfirst(strtolower($domain_parts[0]));
+			}
+		}
+
+		// Ultimate fallback
+		return 'User';
 	}
 
 	/**
@@ -399,6 +473,8 @@ class WC_BC_Customer_Migrator {
 		// Primary address from wholesale data or billing data
 		if (!empty($wholesale_data['address_1'])) {
 			$country_code = WC_BC_Location_Mapper::get_country_code($wholesale_data['country'] ?? '');
+			$state_name = WC_BC_Location_Mapper::get_full_state_name($wholesale_data['state'] ?? '', $country_code);
+
 			$primary_address = array(
 				'first_name' => $wholesale_data['first_name'] ?? '',
 				'last_name' => $wholesale_data['last_name'] ?? '',
@@ -406,7 +482,7 @@ class WC_BC_Customer_Migrator {
 				'address1' => $wholesale_data['address_1'],
 				'address2' => $wholesale_data['address_line_2'] ?? '',
 				'city' => $wholesale_data['city'] ?? '',
-				'state_or_province' => $wholesale_data['state'] ?? '', // THIS IS THE FIX
+				'state_or_province' => $state_name, // Use full state name
 				'postal_code' => $wholesale_data['postcode'] ?? '',
 				'country_code' => $country_code,
 				'phone' => $wholesale_data['phone'] ?? '',
@@ -414,6 +490,8 @@ class WC_BC_Customer_Migrator {
 			);
 		} elseif (!empty($billing_data['billing_address_1'])) {
 			$country_code = WC_BC_Location_Mapper::get_country_code($billing_data['billing_country'] ?? '');
+			$state_name = WC_BC_Location_Mapper::get_full_state_name($billing_data['billing_state'] ?? '', $country_code);
+
 			$primary_address = array(
 				'first_name' => $billing_data['billing_first_name'] ?? '',
 				'last_name' => $billing_data['billing_last_name'] ?? '',
@@ -421,7 +499,7 @@ class WC_BC_Customer_Migrator {
 				'address1' => $billing_data['billing_address_1'],
 				'address2' => $billing_data['billing_address_2'] ?? '',
 				'city' => $billing_data['billing_city'] ?? '',
-				'state_or_province' => $billing_data['billing_state'] ?? '', // THIS IS THE FIX
+				'state_or_province' => $state_name, // Use full state name
 				'postal_code' => $billing_data['billing_postcode'] ?? '',
 				'country_code' => $country_code,
 				'phone' => $billing_data['billing_phone'] ?? '',
@@ -433,11 +511,13 @@ class WC_BC_Customer_Migrator {
 			$addresses[] = $primary_address;
 		}
 
-		// Handle shipping address similarly...
+		// Handle shipping address similarly
 		if (!empty($shipping_data['shipping_address_1']) &&
 		    $shipping_data['shipping_address_1'] !== ($billing_data['billing_address_1'] ?? '')) {
 
 			$country_code = WC_BC_Location_Mapper::get_country_code($shipping_data['shipping_country'] ?? '');
+			$state_name = WC_BC_Location_Mapper::get_full_state_name($shipping_data['shipping_state'] ?? '', $country_code);
+
 			$shipping_address = array(
 				'first_name' => $shipping_data['shipping_first_name'] ?? '',
 				'last_name' => $shipping_data['shipping_last_name'] ?? '',
@@ -445,7 +525,7 @@ class WC_BC_Customer_Migrator {
 				'address1' => $shipping_data['shipping_address_1'],
 				'address2' => $shipping_data['shipping_address_2'] ?? '',
 				'city' => $shipping_data['shipping_city'] ?? '',
-				'state_or_province' => $shipping_data['shipping_state'] ?? '', // THIS IS THE FIX
+				'state_or_province' => $state_name, // Use full state name
 				'postal_code' => $shipping_data['shipping_postcode'] ?? '',
 				'country_code' => $country_code,
 				'address_type' => 'residential'
@@ -470,7 +550,7 @@ class WC_BC_Customer_Migrator {
 			'Position/Title in Company' => $wholesale_data['position_title'] ?? '',
 			'Primary Business' => $wholesale_data['primary_business'] ?? '',
 			'Business ID Type' => $wholesale_data['business_id_type'] ?? '',
-			'Business ID Number' => $wholesale_data['business_id_number'] ?? '0',
+			'Business ID Number' => $wholesale_data['business_id_number'] ?? '',
 			'Company Website' => $wholesale_data['company_website'] ?? '',
 		);
 
@@ -483,9 +563,9 @@ class WC_BC_Customer_Migrator {
 			}
 		}
 
-		// Convert to BigCommerce format
+		// Convert to BigCommerce format - ONLY include non-empty values
 		foreach ($field_mapping as $field_name => $value) {
-			if (!empty($value) && !empty($field_name)) {
+			if (!empty($value) && !empty($field_name) && trim($value) !== '' && trim($value) !== '0') {
 				$form_fields[] = array(
 					'name' => $field_name,
 					'value' => (string) $value

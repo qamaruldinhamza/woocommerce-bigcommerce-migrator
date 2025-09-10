@@ -192,6 +192,9 @@ class WC_BC_Location_Mapper {
 			return '';
 		}
 
+		// Remove WooCommerce suffixes like "(US)", "(UK)", etc.
+		$clean_name = preg_replace('/\s*\([A-Z]{2}\)$/', '', $wc_country_name);
+
 		// Only override specific known differences between WC and BC
 		$bc_overrides = array(
 			'Côte d\'Ivoire' => 'Ivory Coast',
@@ -202,7 +205,7 @@ class WC_BC_Location_Mapper {
 			'Venezuela, Bolivarian Republic of' => 'Venezuela'
 		);
 
-		return $bc_overrides[$wc_country_name] ?? $wc_country_name;
+		return $bc_overrides[$clean_name] ?? $clean_name;
 	}
 
 	// Add this method to WC_BC_Location_Mapper class

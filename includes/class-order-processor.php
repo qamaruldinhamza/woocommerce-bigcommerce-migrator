@@ -259,7 +259,7 @@ class WC_BC_Order_Processor {
 		$raw_zip = $wc_order->get_billing_postcode();
 		$cleaned_address = $this->clean_state_and_zip($raw_state, $raw_zip, $country_code);
 
-		return array(
+		$address = array(
 			'first_name'   => $wc_order->get_billing_first_name(),
 			'last_name'    => $wc_order->get_billing_last_name(),
 			'company'      => $wc_order->get_billing_company(),
@@ -267,12 +267,18 @@ class WC_BC_Order_Processor {
 			'street_2'     => $wc_order->get_billing_address_2(),
 			'city'         => $wc_order->get_billing_city(),
 			'state'        => $cleaned_address['state'],
-			'zip'          => $cleaned_address['zip'],
 			'country'      => $country_name,
 			'country_iso2' => $country_code,
 			'phone'        => $wc_order->get_billing_phone(),
 			'email'        => $wc_order->get_billing_email(),
 		);
+
+		// Only add ZIP if it's not empty
+		if (!empty($cleaned_address['zip'])) {
+			$address['zip'] = $cleaned_address['zip'];
+		}
+
+		return $address;
 	}
 
 	private function prepare_v2_shipping_addresses($wc_order) {
@@ -312,11 +318,15 @@ class WC_BC_Order_Processor {
 			'street_2'        => $wc_order->get_shipping_address_2(),
 			'city'            => $wc_order->get_shipping_city(),
 			'state'           => $cleaned_address['state'],
-			'zip'             => $cleaned_address['zip'],
 			'country'         => $country_name,
 			'country_iso2'    => $country_code,
 			'shipping_method' => $shipping_method_name,
 		);
+
+		// Only add ZIP if it's not empty
+		if (!empty($cleaned_address['zip'])) {
+			$shipping_address['zip'] = $cleaned_address['zip'];
+		}
 
 		return array($shipping_address);
 	}
@@ -348,10 +358,8 @@ class WC_BC_Order_Processor {
 		// Handle missing postal codes based on WooCommerce locale requirements
 		if (empty($cleaned_zip)) {
 			if (!$address_format['postcode_required']) {
-				$cleaned_zip = ''; // Keep empty for countries that don't require postal codes
 				error_log("Postal code not required for country '{$country_code}', keeping empty");
 			} else {
-				// Use a country-appropriate default
 				$cleaned_zip = $this->get_default_postcode($country_code);
 				error_log("Set default postal code '{$cleaned_zip}' for country '{$country_code}'");
 			}

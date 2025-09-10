@@ -192,7 +192,7 @@ class WC_BC_Product_Migrator {
 	/**
 	 * Create product options after product is created
 	 */
-	private function create_product_options($product, $bc_product_id) {
+	public function create_product_options($product, $bc_product_id) {
 		if (!$product->is_type('variable')) {
 			return true;
 		}
@@ -1468,5 +1468,55 @@ class WC_BC_Product_Migrator {
 	}
 
 
+
+	// Add this method to WC_BC_Product_Migrator class:
+	public function migrate_single_variation($variation, $parent_product, $bc_product_id) {
+		try {
+			// Prepare variant data (reuse existing logic from migrate_variations method)
+			$variant_weight = $this->convert_and_fix_weight($variation->get_weight() ?: $parent_product->get_weight());
+
+			$variant_data = array(
+				'sku' => $variation->get_sku() ?: 'VAR-' . $variation->get_id(),
+				'option_values' => array(),
+				'price' => (float) ($variation->get_regular_price() ?: $parent_product->get_regular_price() ?: 0),
+			);
+
+			if ($variant_weight > 0) {
+				$variant_data['weight'] = (float) $variant_weight;
+			}
+
+			// Handle variant sale price
+			$variant_sale_price = $variation->get_sale_price();
+			if ($variant_sale_price !== '' && $variant_sale_price !== null && (float) $variant_sale_price > 0) {
+				$variant_data['sale_price'] = (float) $variant_sale_price;
+			}
+
+			// Get product options for this parent product
+			$product_options = isset($this->product_option_map[$parent_product->get_id()])
+				? $this->product_option_map[$parent_product->get_id()]
+				: array();
+
+			// Prepare option values
+			$option_values = $this->prepare_variant_option_values($variation, $product_options);
+			if (!empty($option_values)) {
+				$variant_data['option_values'] = $option_values;
+			} else {
+				throw new Exception('No option values found for variant');
+			}
+
+			// Create variant in BigCommerce
+			$result = $this->bc_api->create_product_variant($bc_product_id, $variant_data);
+
+			if (isset($result['data']['id'])) {
+				return array('success' => true, 'bc_variation_id' => $result['data']['id']);
+			} else {
+				$error_msg = isset($result['error']) ? $result['error'] : 'Unknown error';
+				throw new Exception($error_msg);
+			}
+
+		} catch (Exception $e) {
+			return array('error' => $e->getMessage());
+		}
+	}
 
 }

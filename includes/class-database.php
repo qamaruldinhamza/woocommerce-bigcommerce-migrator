@@ -86,14 +86,28 @@ class WC_BC_Database {
 	/**
 	 * Get pending parent products only (not variations)
 	 */
-	public static function get_pending_parent_products( $limit = 10 ) {
+	// In WC_BC_Database class - modify this method:
+	public static function get_pending_parent_products($limit = 10) {
 		global $wpdb;
 		$table_name = $wpdb->prefix . WC_BC_MIGRATOR_TABLE;
 
-		return $wpdb->get_results( $wpdb->prepare(
-			"SELECT * FROM $table_name WHERE status = 'pending' AND wc_variation_id IS NULL ORDER BY id ASC LIMIT %d",
+		// Get both actual pending parent products AND products that have pending variations
+		return $wpdb->get_results($wpdb->prepare(
+			"SELECT DISTINCT wc_product_id, bc_product_id, status 
+         FROM $table_name 
+         WHERE (
+             (wc_variation_id IS NULL AND status = 'pending') 
+             OR 
+             (wc_product_id IN (
+                 SELECT DISTINCT wc_product_id 
+                 FROM $table_name 
+                 WHERE wc_variation_id IS NOT NULL AND status = 'pending'
+             ))
+         )
+         ORDER BY wc_product_id ASC 
+         LIMIT %d",
 			$limit
-		) );
+		));
 	}
 
 	/**

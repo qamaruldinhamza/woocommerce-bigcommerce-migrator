@@ -167,7 +167,7 @@ class WC_BC_Batch_Processor {
 	}
 
 	public function process_batch($batch_size = 10) {
-		// Get pending parent products only (variations are handled within the migrate_product method)
+		// Get products that need processing (either new products or products with pending variations)
 		$pending_products = WC_BC_Database::get_pending_parent_products($batch_size);
 
 		if (empty($pending_products)) {
@@ -183,15 +183,23 @@ class WC_BC_Batch_Processor {
 		$errors = 0;
 
 		foreach ($pending_products as $mapping) {
-			// Migrate the product (this handles both simple and variable products with their variations)
-			$result = $migrator->migrate_product($mapping->wc_product_id);
+			$wc_product_id = $mapping->wc_product_id;
+
+			// Check if this is a product with pending variations but already migrated parent
+			if ($mapping->bc_product_id && $mapping->status === 'success') {
+				// This product exists in BC, just migrate pending variations
+				$result = $this->migrate_pending_variations($wc_product_id, $mapping->bc_product_id);
+			} else {
+				// Migrate the entire product (this handles both simple and variable products)
+				$result = $migrator->migrate_product($wc_product_id);
+			}
 
 			if (isset($result['error'])) {
-				error_log("Migration error for product {$mapping->wc_product_id}: " . $result['error']);
+				error_log("Migration error for product {$wc_product_id}: " . $result['error']);
 				$errors++;
 			} else {
 				$processed++;
-				error_log("Successfully migrated product {$mapping->wc_product_id} to BC ID: " . $result['bc_product_id']);
+				error_log("Successfully processed product {$wc_product_id}");
 			}
 
 			// Add a small delay to avoid API rate limits
@@ -204,6 +212,84 @@ class WC_BC_Batch_Processor {
 			'errors' => $errors,
 			'remaining' => $this->get_remaining_count(),
 		);
+	}
+
+// Add this new method to WC_BC_Batch_Processor:
+	private function migrate_pending_variations($wc_product_id, $bc_product_id) {
+		global $wpdb;
+		$table_name = $wpdb->prefix . WC_BC_MIGRATOR_TABLE;
+
+		try {
+			$product = wc_get_product($wc_product_id);
+			if (!$product || !$product->is_type('variable')) {
+				return array('error' => 'Product not found or not variable');
+			}
+
+			$migrator = new WC_BC_Product_Migrator();
+
+			// Get pending variations for this product
+			$pending_variations = $wpdb->get_results($wpdb->prepare(
+				"SELECT wc_variation_id FROM $table_name 
+             WHERE wc_product_id = %d AND wc_variation_id IS NOT NULL AND status = 'pending'",
+				$wc_product_id
+			));
+
+			if (empty($pending_variations)) {
+				return array('success' => true, 'message' => 'No pending variations found');
+			}
+
+			// First ensure product options are created/updated
+			$migrator->create_product_options($product, $bc_product_id);
+
+			$success_count = 0;
+			$error_count = 0;
+
+			foreach ($pending_variations as $variation_data) {
+				$variation_id = $variation_data->wc_variation_id;
+				$variation = wc_get_product($variation_id);
+
+				if (!$variation) {
+					continue;
+				}
+
+				// Use the existing variation migration logic
+				$result = $migrator->migrate_single_variation($variation, $product, $bc_product_id);
+
+				if (isset($result['error'])) {
+					$error_count++;
+					WC_BC_Database::update_mapping(
+						$wc_product_id,
+						$variation_id,
+						array(
+							'status' => 'error',
+							'message' => $result['error'],
+						)
+					);
+				} else {
+					$success_count++;
+					WC_BC_Database::update_mapping(
+						$wc_product_id,
+						$variation_id,
+						array(
+							'bc_product_id' => $bc_product_id,
+							'bc_variation_id' => $result['bc_variation_id'],
+							'status' => 'success',
+							'message' => 'Variation migrated successfully',
+						)
+					);
+				}
+			}
+
+			return array(
+				'success' => true,
+				'variations_processed' => $success_count + $error_count,
+				'variations_success' => $success_count,
+				'variations_errors' => $error_count
+			);
+
+		} catch (Exception $e) {
+			return array('error' => $e->getMessage());
+		}
 	}
 
 	public function retry_errors($batch_size = 10) {

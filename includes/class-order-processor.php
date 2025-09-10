@@ -466,7 +466,7 @@ class WC_BC_Order_Processor {
 	}
 
 	/**
-	 * Creates the payload for a "custom product" as a fallback.
+	 * Creates the payload for a "custom product" as a fallback with validation.
 	 */
 	private function create_fallback_product_payload($item) {
 		$quantity = (int) $item->get_quantity();
@@ -474,19 +474,14 @@ class WC_BC_Order_Processor {
 			return null;
 		}
 
-		// --- NEW SANITIZER LOGIC ---
-		$raw_name = $item->get_name();
-		// 1. Trim whitespace from start and end, and reduce multiple spaces to a single space.
-		$clean_name = trim(preg_replace('/\s+/', ' ', $raw_name));
-		$clean_name = str_replace(".", "", $clean_name);
-		$clean_name = str_replace("/", "", $clean_name);
+		$clean_name = $this->sanitize_product_name($item->get_name(), $item->get_product_id());
 
-		// 2. Check for the exact duplication pattern and fix it.
-		$half_length = (int) (strlen($clean_name) / 2);
-		if (strlen($clean_name) > 10 && substr($clean_name, 0, $half_length) === substr($clean_name, $half_length)) {
-			$clean_name = substr($clean_name, 0, $half_length);
+		// Final validation
+		$validation = $this->validate_product_name($clean_name);
+		if ($validation !== true) {
+			error_log("Product name validation failed for order item " . $item->get_id() . ": " . implode(', ', $validation));
+			$clean_name = 'Custom Product ' . $item->get_product_id();
 		}
-		// --- END SANITIZER LOGIC ---
 
 		return array(
 			'name'          => $clean_name,
@@ -496,7 +491,67 @@ class WC_BC_Order_Processor {
 		);
 	}
 
-	// --- All functions below this line are UNUSED by the new logic but are preserved as requested ---
+	/**
+	 * Comprehensive product name sanitization
+	 */
+	private function sanitize_product_name($raw_name, $product_id = null) {
+		// 1. Basic cleanup
+		$clean_name = trim(preg_replace('/\s+/', ' ', $raw_name));
+
+		// 2. Remove problematic characters
+		$clean_name = str_replace(array(".", "/", "\\", "|", "<", ">", ":", "*", "?", '"', "'"), "", $clean_name);
+
+		// 3. Fix duplication pattern
+		$half_length = (int) (strlen($clean_name) / 2);
+		if (strlen($clean_name) > 10 && $half_length > 5 && substr($clean_name, 0, $half_length) === substr($clean_name, $half_length)) {
+			$clean_name = substr($clean_name, 0, $half_length);
+		}
+
+		// 4. Length limits
+		if (strlen($clean_name) > 250) {
+			$clean_name = substr($clean_name, 0, 247) . '...';
+		}
+
+		// 5. Remove control characters
+		$clean_name = preg_replace('/[\x00-\x1F\x7F]/', '', $clean_name);
+		$clean_name = trim($clean_name);
+
+		// 6. Fallback for empty names
+		if (strlen($clean_name) < 1) {
+			$clean_name = 'Custom Product' . ($product_id ? ' ' . $product_id : '');
+		}
+
+		return $clean_name;
+	}
+
+
+	/**
+	 * Validate product name for BigCommerce compatibility
+	 */
+	private function validate_product_name($name) {
+		// Check for common issues that cause BigCommerce rejection
+		$issues = array();
+
+		if (strlen($name) > 250) {
+			$issues[] = 'Name too long (' . strlen($name) . ' chars)';
+		}
+
+		if (strlen(trim($name)) < 1) {
+			$issues[] = 'Name is empty';
+		}
+
+		// Check for control characters
+		if (preg_match('/[\x00-\x1F\x7F]/', $name)) {
+			$issues[] = 'Contains control characters';
+		}
+
+		// Check for problematic patterns
+		if (preg_match('/(.+)\1+/', $name)) {
+			$issues[] = 'Contains repeated patterns';
+		}
+
+		return empty($issues) ? true : $issues;
+	}
 
 	private function get_v2_product_options($wc_variation, $bc_product_id) {
 		$options = array();

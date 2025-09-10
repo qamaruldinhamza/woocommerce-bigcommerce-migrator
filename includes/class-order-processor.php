@@ -255,6 +255,10 @@ class WC_BC_Order_Processor {
 			}
 		}
 
+		$raw_state = $wc_order->get_billing_state();
+		$raw_zip = $wc_order->get_billing_postcode();
+		$cleaned_address = $this->clean_state_and_zip($raw_state, $raw_zip, $country_code);
+
 		return array(
 			'first_name'   => $wc_order->get_billing_first_name(),
 			'last_name'    => $wc_order->get_billing_last_name(),
@@ -262,8 +266,8 @@ class WC_BC_Order_Processor {
 			'street_1'     => $wc_order->get_billing_address_1(),
 			'street_2'     => $wc_order->get_billing_address_2(),
 			'city'         => $wc_order->get_billing_city(),
-			'state'        => WC_BC_Location_Mapper::get_full_state_name($wc_order->get_billing_state(), $country_code),
-			'zip'          => $wc_order->get_billing_postcode(),
+			'state'        => $cleaned_address['state'],
+			'zip'          => $cleaned_address['zip'],
 			'country'      => $country_name,
 			'country_iso2' => $country_code,
 			'phone'        => $wc_order->get_billing_phone(),
@@ -296,6 +300,10 @@ class WC_BC_Order_Processor {
 			}
 		}
 
+		$raw_state = $wc_order->get_shipping_state();
+		$raw_zip = $wc_order->get_shipping_postcode();
+		$cleaned_address = $this->clean_state_and_zip($raw_state, $raw_zip, $country_code);
+
 		$shipping_address = array(
 			'first_name'      => $wc_order->get_shipping_first_name(),
 			'last_name'       => $wc_order->get_shipping_last_name(),
@@ -303,8 +311,8 @@ class WC_BC_Order_Processor {
 			'street_1'        => $wc_order->get_shipping_address_1(),
 			'street_2'        => $wc_order->get_shipping_address_2(),
 			'city'            => $wc_order->get_shipping_city(),
-			'state'           => WC_BC_Location_Mapper::get_full_state_name($wc_order->get_shipping_state(), $country_code),
-			'zip'             => $wc_order->get_shipping_postcode(),
+			'state'           => $cleaned_address['state'],
+			'zip'             => $cleaned_address['zip'],
 			'country'         => $country_name,
 			'country_iso2'    => $country_code,
 			'shipping_method' => $shipping_method_name,
@@ -313,7 +321,90 @@ class WC_BC_Order_Processor {
 		return array($shipping_address);
 	}
 
-	// --- START OF REFACTORED CODE ---
+	// Add this new method to WC_BC_Order_Processor
+	private function clean_state_and_zip($state, $zip, $country_code) {
+		$cleaned_state = trim($state);
+		$cleaned_zip = trim($zip);
+
+		// Handle cases where state got mixed into ZIP field
+		if (empty($cleaned_state) && !empty($cleaned_zip)) {
+			// Check if ZIP contains state code (like "TX 78212")
+			if (preg_match('/^([A-Z]{2})\s+(.+)$/', $cleaned_zip, $matches)) {
+				$potential_state = $matches[1];
+				$potential_zip = $matches[2];
+
+				// Validate if it's a real state for this country
+				if ($country_code === 'US') {
+					$us_states = array(
+						'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
+						'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD',
+						'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ',
+						'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC',
+						'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY',
+						'DC'
+					);
+
+					if (in_array($potential_state, $us_states)) {
+						$cleaned_state = $potential_state;
+						$cleaned_zip = $potential_zip;
+						error_log("Fixed mixed state/zip: extracted state '{$potential_state}' from zip field '{$zip}'");
+					}
+				}
+			}
+		}
+
+		// If state is still empty and country requires it, set a default
+		if (empty($cleaned_state) && WC_BC_Location_Mapper::country_has_states($country_code)) {
+			if ($country_code === 'US') {
+				// Try to guess state from ZIP code for US
+				$guessed_state = $this->guess_us_state_from_zip($cleaned_zip);
+				if ($guessed_state) {
+					$cleaned_state = $guessed_state;
+					error_log("Guessed US state '{$guessed_state}' from ZIP '{$cleaned_zip}'");
+				} else {
+					$cleaned_state = 'Unknown';
+					error_log("Could not determine state for US ZIP '{$cleaned_zip}', using 'Unknown'");
+				}
+			} else {
+				$cleaned_state = 'Unknown';
+			}
+		}
+
+		return array(
+			'state' => $cleaned_state,
+			'zip' => $cleaned_zip
+		);
+	}
+
+// Add this helper method for US state guessing
+	private function guess_us_state_from_zip($zip) {
+		if (empty($zip) || !preg_match('/^\d{5}/', $zip)) {
+			return null;
+		}
+
+		$zip_prefix = substr($zip, 0, 3);
+		$zip_num = intval($zip_prefix);
+
+		// Basic ZIP code to state mapping for common ranges
+		$zip_ranges = array(
+			array('min' => 100, 'max' => 149, 'state' => 'NY'),
+			array('min' => 200, 'max' => 299, 'state' => 'DC'),
+			array('min' => 300, 'max' => 399, 'state' => 'GA'),
+			array('min' => 600, 'max' => 699, 'state' => 'IL'),
+			array('min' => 700, 'max' => 799, 'state' => 'TX'),
+			array('min' => 800, 'max' => 899, 'state' => 'CO'),
+			array('min' => 900, 'max' => 999, 'state' => 'CA'),
+		);
+
+		foreach ($zip_ranges as $range) {
+			if ($zip_num >= $range['min'] && $zip_num <= $range['max']) {
+				return $range['state'];
+			}
+		}
+
+		return null;
+	}
+
 
 	/**
 	 * Prepare V2 order products with robust fallbacks.

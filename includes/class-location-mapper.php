@@ -122,14 +122,18 @@ class WC_BC_Location_Mapper {
 		// Add state only if valid
 		$address['state_or_province'] = $valid_state ?: '';
 
-		// Add postal code only if country uses them and we have one
+		// Some countries may expect this field to exist even when not used
 		if (self::bc_has_postal_codes($country_code) && !empty($postal_code)) {
 			$address['postal_code'] = $postal_code;
+		} else {
+			$address['postal_code'] = '';
 		}
 
 		// Add phone if provided
 		if (!empty($phone)) {
 			$address['phone'] = $phone;
+		}else{
+			$address['phone'] = '';
 		}
 
 		return $address;

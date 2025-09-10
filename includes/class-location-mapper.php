@@ -120,9 +120,7 @@ class WC_BC_Location_Mapper {
 		);
 
 		// Add state only if valid
-		if ($valid_state) {
-			$address['state_or_province'] = $valid_state;
-		}
+		$address['state_or_province'] = $valid_state ?: '';
 
 		// Add postal code only if country uses them and we have one
 		if (self::bc_has_postal_codes($country_code) && !empty($postal_code)) {

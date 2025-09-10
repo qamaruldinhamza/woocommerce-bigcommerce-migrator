@@ -192,17 +192,20 @@ class WC_BC_Location_Mapper {
 			return '';
 		}
 
-		// Remove WooCommerce suffixes like "(US)", "(UK)", etc.
-		$clean_name = preg_replace('/\s*\([A-Z]{2}\)$/', '', $wc_country_name);
+		// Only remove WooCommerce country code suffixes like "(US)", "(UK)", not descriptive text
+		$clean_name = preg_replace('/\s*\(' . strtoupper($country_code) . '\)$/', '', $wc_country_name);
 
-		// Only override specific known differences between WC and BC
+		// Mapping for names that are known to differ between WooCommerce and BigCommerce
 		$bc_overrides = array(
 			'Côte d\'Ivoire' => 'Ivory Coast',
 			'Korea, Republic of' => 'South Korea',
 			'Russian Federation' => 'Russia',
 			'Syrian Arab Republic' => 'Syria',
 			'Iran, Islamic Republic of' => 'Iran',
-			'Venezuela, Bolivarian Republic of' => 'Venezuela'
+			'Venezuela, Bolivarian Republic of' => 'Venezuela',
+			'Virgin Islands (British)' => 'Virgin Islands, British',
+			'Virgin Islands (US)' => 'Virgin Islands, U.S.',
+			'Virgin Islands' => 'Virgin Islands, U.S.'
 		);
 
 		return $bc_overrides[$clean_name] ?? $clean_name;

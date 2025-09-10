@@ -122,51 +122,42 @@ class WC_BC_Product_Syncer {
 				$sync_data['sale_price'] = (float) $sale_price;
 			}
 
-			// 3. Get supplier data and update custom fields
+			// 3. Always update supplier custom field (even if empty)
 			$supplier_name = $this->get_supplier_name($wc_product_id);
 
-			if ($supplier_name || !empty($sync_data)) {
-				// Get current custom fields
-				$custom_fields_response = $this->bc_api->get_product_custom_fields($bc_product_id);
-				$existing_fields = isset($custom_fields_response['data']) ? $custom_fields_response['data'] : array();
+			// Get current custom fields
+			$custom_fields_response = $this->bc_api->get_product_custom_fields($bc_product_id);
+			$existing_fields = isset($custom_fields_response['data']) ? $custom_fields_response['data'] : array();
 
-				$updated_fields = array();
-				$supplier_field_exists = false;
+			$updated_fields = array();
+			$supplier_field_exists = false;
 
-				// Preserve existing fields and update supplier if needed
-				foreach ($existing_fields as $field) {
-					if ($field['name'] === '__supplier') {
-						$supplier_field_exists = true;
-						if ($supplier_name && $supplier_name !== $field['value']) {
-							// Update supplier
-							$updated_fields[] = array(
-								'id' => $field['id'],
-								'name' => '__supplier',
-								'value' => $supplier_name
-							);
-						} else {
-							// Keep existing
-							$updated_fields[] = $field;
-						}
-					} else {
-						// Keep other fields
-						$updated_fields[] = $field;
-					}
-				}
-
-				// Add supplier field if it doesn't exist
-				if (!$supplier_field_exists && $supplier_name) {
+			// Preserve existing fields and update/add supplier
+			foreach ($existing_fields as $field) {
+				if ($field['name'] === '__supplier') {
+					$supplier_field_exists = true;
+					// Always update supplier field with current value (or empty)
 					$updated_fields[] = array(
+						'id' => $field['id'],
 						'name' => '__supplier',
-						'value' => $supplier_name
+						'value' => $supplier_name ?: '#' // Use empty string if no supplier
 					);
-				}
-
-				// Add custom fields to sync data if updated
-				if (!empty($updated_fields)) {
-					$sync_data['custom_fields'] = $updated_fields;
+				} else {
+					// Keep other fields
+					$updated_fields[] = $field;
 				}
 			}
+
+			// Add supplier field if it doesn't exist (always add, even if empty)
+			if (!$supplier_field_exists) {
+				$updated_fields[] = array(
+					'name' => '__supplier',
+					'value' => $supplier_name ?: '#' // Use empty string if no supplier
+				);
+			}
+
+			// Always add custom fields to sync data since we're managing supplier field
+			$sync_data['custom_fields'] = $updated_fields;
 
 			if (empty($sync_data)) {
 				return array('success' => true, 'message' => 'No data to sync');

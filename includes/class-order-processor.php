@@ -236,11 +236,23 @@ class WC_BC_Order_Processor {
 		);
 	}
 
-	private function prepare_v2_billing_address( $wc_order ) {
+	private function prepare_v2_billing_address($wc_order) {
 		$country_code = $wc_order->get_billing_country();
-		$country_name = WC_BC_Location_Mapper::get_bc_country_name( $country_code );
-		if ( empty( $country_name ) ) {
-			throw new Exception( "Invalid or unrecognized billing country code '{$country_code}' for Order #" . $wc_order->get_id() );
+		$country_name = WC_BC_Location_Mapper::get_bc_country_name($country_code);
+
+		// Enhanced validation and fallback
+		if (empty($country_name)) {
+			error_log("Invalid or unrecognized billing country code '{$country_code}' for Order #" . $wc_order->get_id());
+			// Try to get a fallback country name
+			$countries = WC()->countries->get_countries();
+			$fallback_name = $countries[$country_code] ?? null;
+
+			if ($fallback_name) {
+				$country_name = $fallback_name;
+				error_log("Using fallback country name '{$country_name}' for code '{$country_code}'");
+			} else {
+				throw new Exception("Invalid or unrecognized billing country code '{$country_code}' for Order #" . $wc_order->get_id());
+			}
 		}
 
 		return array(
@@ -250,7 +262,7 @@ class WC_BC_Order_Processor {
 			'street_1'     => $wc_order->get_billing_address_1(),
 			'street_2'     => $wc_order->get_billing_address_2(),
 			'city'         => $wc_order->get_billing_city(),
-			'state'        => WC_BC_Location_Mapper::get_full_state_name( $wc_order->get_billing_state(), $country_code ),
+			'state'        => WC_BC_Location_Mapper::get_full_state_name($wc_order->get_billing_state(), $country_code),
 			'zip'          => $wc_order->get_billing_postcode(),
 			'country'      => $country_name,
 			'country_iso2' => $country_code,
@@ -259,17 +271,31 @@ class WC_BC_Order_Processor {
 		);
 	}
 
-	private function prepare_v2_shipping_addresses( $wc_order ) {
-		if ( ! $wc_order->get_shipping_address_1() ) {
+	private function prepare_v2_shipping_addresses($wc_order) {
+		if (!$wc_order->get_shipping_address_1()) {
 			return array();
 		}
-		$shipping_methods   = $wc_order->get_shipping_methods();
-		$shipping_method_name = ! empty( $shipping_methods ) ? reset( $shipping_methods )->get_method_title() : 'Migrated Shipping';
-		$country_code       = $wc_order->get_shipping_country();
-		$country_name       = WC_BC_Location_Mapper::get_bc_country_name( $country_code );
-		if ( empty( $country_name ) ) {
-			throw new Exception( "Invalid or unrecognized shipping country code '{$country_code}' for Order #" . $wc_order->get_id() );
+
+		$shipping_methods = $wc_order->get_shipping_methods();
+		$shipping_method_name = !empty($shipping_methods) ? reset($shipping_methods)->get_method_title() : 'Migrated Shipping';
+		$country_code = $wc_order->get_shipping_country();
+		$country_name = WC_BC_Location_Mapper::get_bc_country_name($country_code);
+
+		// Enhanced validation and fallback
+		if (empty($country_name)) {
+			error_log("Invalid or unrecognized shipping country code '{$country_code}' for Order #" . $wc_order->get_id());
+			// Try to get a fallback country name
+			$countries = WC()->countries->get_countries();
+			$fallback_name = $countries[$country_code] ?? null;
+
+			if ($fallback_name) {
+				$country_name = $fallback_name;
+				error_log("Using fallback country name '{$country_name}' for code '{$country_code}'");
+			} else {
+				throw new Exception("Invalid or unrecognized shipping country code '{$country_code}' for Order #" . $wc_order->get_id());
+			}
 		}
+
 		$shipping_address = array(
 			'first_name'      => $wc_order->get_shipping_first_name(),
 			'last_name'       => $wc_order->get_shipping_last_name(),
@@ -277,14 +303,14 @@ class WC_BC_Order_Processor {
 			'street_1'        => $wc_order->get_shipping_address_1(),
 			'street_2'        => $wc_order->get_shipping_address_2(),
 			'city'            => $wc_order->get_shipping_city(),
-			'state'           => WC_BC_Location_Mapper::get_full_state_name( $wc_order->get_shipping_state(), $country_code ),
+			'state'           => WC_BC_Location_Mapper::get_full_state_name($wc_order->get_shipping_state(), $country_code),
 			'zip'             => $wc_order->get_shipping_postcode(),
 			'country'         => $country_name,
 			'country_iso2'    => $country_code,
 			'shipping_method' => $shipping_method_name,
 		);
 
-		return array( $shipping_address );
+		return array($shipping_address);
 	}
 
 	// --- START OF REFACTORED CODE ---

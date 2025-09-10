@@ -201,7 +201,25 @@ class WC_BC_Location_Mapper {
 		$name_map = array(
 			'United States (US)' => 'United States',
 			'United Kingdom (UK)' => 'United Kingdom',
-			// Add other known discrepancies here as you find them
+			'Côte d\'Ivoire' => 'Ivory Coast', // WooCommerce uses this
+			'Korea, Republic of' => 'South Korea',
+			'Korea, Democratic People\'s Republic of' => 'North Korea',
+			'Russian Federation' => 'Russia',
+			'Syrian Arab Republic' => 'Syria',
+			'Iran, Islamic Republic of' => 'Iran',
+			'Venezuela, Bolivarian Republic of' => 'Venezuela',
+			'Bolivia, Plurinational State of' => 'Bolivia',
+			'Congo, Democratic Republic of the' => 'Democratic Republic of the Congo',
+			'Congo' => 'Republic of the Congo',
+			'Macedonia, Republic of North' => 'North Macedonia',
+			'Moldova, Republic of' => 'Moldova',
+			'Tanzania, United Republic of' => 'Tanzania',
+			'Virgin Islands, British' => 'British Virgin Islands',
+			'Virgin Islands, U.S.' => 'United States Virgin Islands',
+			'Palestinian Territory, Occupied' => 'Palestine',
+			'Lao People\'s Democratic Republic' => 'Laos',
+			'Brunei Darussalam' => 'Brunei',
+			'Myanmar' => 'Burma (Myanmar)',
 		);
 
 		// Return the mapped name if it exists, otherwise return the standard WC name

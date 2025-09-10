@@ -83,6 +83,9 @@
             $('#export-order-errors').on('click', this.exportOrderErrors.bind(this));
             $('#reset-order-migration').on('click', this.resetOrderMigration.bind(this));
 
+            $('#sync-product-data').on('click', this.startProductSync.bind(this));
+            $('#stop-sync').on('click', this.stopProductSync.bind(this));
+
 
         },
 
@@ -769,10 +772,102 @@
             WCBCMigrator.addCustomerLog('info', 'Customer migration reset functionality coming soon');
         },
 
-// Export customer errors
+        // Export customer errors
         exportCustomerErrors: function(e) {
             e.preventDefault();
             WCBCMigrator.addCustomerLog('info', 'Export customer errors functionality coming soon');
+        },
+
+
+        // Products Sync    :
+        startProductSync: function(e) {
+            e.preventDefault();
+            if (this.isSyncRunning) return;
+
+            this.isSyncRunning = true;
+            this.shouldStopSync = false;
+
+            $('#sync-product-data').prop('disabled', true);
+            $('#stop-sync').prop('disabled', false);
+            $('#sync-progress-bar').show();
+            $('#sync-live-log').show();
+
+            this.addSyncLog('info', 'Starting product data sync...');
+            this.processSyncBatch();
+        },
+
+        stopProductSync: function(e) {
+            e.preventDefault();
+            this.shouldStopSync = true;
+            $('#stop-sync').prop('disabled', true).text('Stopping...');
+        },
+
+        processSyncBatch: function() {
+            if (this.shouldStopSync) {
+                this.finishProductSync();
+                return;
+            }
+
+            var batchSize = $('#sync-batch-size').val() || 20;
+
+            $.ajax({
+                url: wcBcMigrator.apiUrl + 'products/sync-data',
+                method: 'POST',
+                data: { batch_size: batchSize },
+                beforeSend: function(xhr) {
+                    xhr.setRequestHeader('X-WP-Nonce', wcBcMigrator.nonce);
+                },
+                success: function(response) {
+                    if (response.success) {
+                        if (response.processed > 0) {
+                            WCBCMigrator.addSyncLog('success', 'Processed ' + response.processed + ' products. Updated: ' + response.updated + ', Failed: ' + response.failed);
+                        }
+
+                        WCBCMigrator.updateSyncProgress(response);
+
+                        if (response.remaining > 0 && !WCBCMigrator.shouldStopSync) {
+                            setTimeout(function() {
+                                WCBCMigrator.processSyncBatch();
+                            }, 1000);
+                        } else {
+                            WCBCMigrator.finishProductSync();
+                        }
+                    } else {
+                        WCBCMigrator.addSyncLog('error', 'Error: ' + response.message);
+                        WCBCMigrator.finishProductSync();
+                    }
+                },
+                error: function() {
+                    WCBCMigrator.addSyncLog('error', 'Sync batch processing failed');
+                    WCBCMigrator.finishProductSync();
+                }
+            });
+        },
+
+        finishProductSync: function() {
+            this.isSyncRunning = false;
+            this.shouldStopSync = false;
+
+            $('#sync-product-data').prop('disabled', false);
+            $('#stop-sync').prop('disabled', true).text('Stop Sync');
+
+            this.addSyncLog('info', 'Product sync process completed');
+        },
+
+        updateSyncProgress: function(response) {
+            if (response.total_products > 0) {
+                var percentage = Math.round(((response.total_products - response.remaining) / response.total_products) * 100);
+                $('#sync-progress-fill').css('width', percentage + '%').text(percentage + '%');
+            }
+        },
+
+        addSyncLog: function(type, message) {
+            var timestamp = new Date().toLocaleTimeString();
+            var logEntry = $('<div class="log-entry ' + type + '">[' + timestamp + '] ' + message + '</div>');
+            $('#sync-log-entries').prepend(logEntry);
+
+            // Keep only last 50 entries
+            $('#sync-log-entries .log-entry').slice(50).remove();
         }
     };
 

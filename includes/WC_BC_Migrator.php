@@ -50,6 +50,8 @@ class WC_BC_Migrator {
 		require_once WC_BC_MIGRATOR_PATH . "includes/class-order-database.php";
 		require_once WC_BC_MIGRATOR_PATH . "includes/class-order-processor.php";
 		require_once WC_BC_MIGRATOR_PATH . "includes/class-order-status-mapper.php";
+		require_once WC_BC_MIGRATOR_PATH . "includes/class-product-syncer.php";
+
 	}
 
 	public function activate() {

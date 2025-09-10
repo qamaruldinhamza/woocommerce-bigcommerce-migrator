@@ -231,6 +231,20 @@ class WC_BC_REST_API {
 			),
 		));
 
+
+		register_rest_route('wc-bc-migrator/v1', '/products/sync-data', array(
+			'methods' => 'POST',
+			'callback' => array($this, 'sync_product_data'),
+			'permission_callback' => array($this, 'check_permission'),
+			'args' => array(
+				'batch_size' => array(
+					'required' => false,
+					'default' => 20,
+					'sanitize_callback' => 'absint',
+				),
+			),
+		));
+
 	}
 
 	public function check_permission() {
@@ -636,4 +650,20 @@ class WC_BC_REST_API {
 			), 500);
 		}
 	}
+
+	public function sync_product_data($request) {
+		$batch_size = $request->get_param('batch_size') ?: 20;
+
+		try {
+			$syncer = new WC_BC_Product_Syncer();
+			$result = $syncer->sync_batch($batch_size);
+			return new WP_REST_Response($result, 200);
+		} catch (Exception $e) {
+			return new WP_REST_Response(array(
+				'success' => false,
+				'message' => $e->getMessage()
+			), 500);
+		}
+	}
+
 }

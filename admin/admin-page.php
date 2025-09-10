@@ -96,31 +96,31 @@ $client_secret = get_option('wc_bc_client_secret', '');
 							<?php _e('Export Error Report', 'wc-bc-migrator'); ?>
 						</button>
 					</div>
-				</div>
 
-                <div class="action-group">
-                    <h3><?php _e('Post-Migration Sync', 'wc-bc-migrator'); ?></h3>
-                    <p><?php _e('Sync quantity, price, and supplier data for already migrated products.', 'wc-bc-migrator'); ?></p>
-                    <label><?php _e('Batch Size:', 'wc-bc-migrator'); ?>
-                        <input type="number" class="batch-size-input" id="sync-batch-size" value="20" min="1" max="50">
-                    </label>
-                    <button class="button button-primary" id="sync-product-data">
-                        <?php _e('Sync Product Data', 'wc-bc-migrator'); ?>
-                    </button>
-                    <button class="button button-secondary" id="stop-sync" disabled>
-                        <?php _e('Stop Sync', 'wc-bc-migrator'); ?>
-                    </button>
+                    <div class="action-group">
+                        <h3><?php _e('Post-Migration Sync', 'wc-bc-migrator'); ?></h3>
+                        <p><?php _e('Sync quantity, price, and supplier data for already migrated products.', 'wc-bc-migrator'); ?></p>
+                        <label><?php _e('Batch Size:', 'wc-bc-migrator'); ?>
+                            <input type="number" class="batch-size-input" id="sync-batch-size" value="20" min="1" max="50">
+                        </label>
+                        <button class="button button-primary" id="sync-product-data">
+                            <?php _e('Sync Product Data', 'wc-bc-migrator'); ?>
+                        </button>
+                        <button class="button button-secondary" id="stop-sync" disabled>
+                            <?php _e('Stop Sync', 'wc-bc-migrator'); ?>
+                        </button>
 
-                    <div class="progress-bar" id="sync-progress-bar">
-                        <div class="progress-fill" id="sync-progress-fill">0%</div>
+                        <div class="progress-bar" id="sync-progress-bar">
+                            <div class="progress-fill" id="sync-progress-fill">0%</div>
+                        </div>
                     </div>
-                </div>
 
-                <!-- Add sync log container -->
-                <div class="log-container" id="sync-live-log" style="display: none;">
-                    <h3><?php _e('Sync Progress', 'wc-bc-migrator'); ?></h3>
-                    <div id="sync-log-entries"></div>
-                </div>
+                    <!-- Add sync log container -->
+                    <div class="log-container" id="sync-live-log" style="display: none;">
+                        <h3><?php _e('Sync Progress', 'wc-bc-migrator'); ?></h3>
+                        <div id="sync-log-entries"></div>
+                    </div>
+				</div>
 
 				<!-- Live Log -->
 				<div class="log-container" id="live-log" style="display: none;">

@@ -579,30 +579,75 @@ class WC_BC_Product_Verification {
 			return array('success' => false, 'message' => 'WooCommerce variation not found');
 		}
 
+		// Get parent product to access options
+		$parent_product = wc_get_product($wc_variation->get_parent_id());
+		if (!$parent_product) {
+			return array('success' => false, 'message' => 'Parent product not found');
+		}
+
 		// Get variation attributes
-		$attributes = $wc_variation->get_attributes();
+		$attributes = $wc_variation->get_variation_attributes();
 		$option_values = array();
 
 		foreach ($attributes as $attribute_name => $attribute_value) {
-			// Remove 'pa_' prefix if it exists
-			$clean_name = str_replace('pa_', '', $attribute_name);
+			// Skip if no value set
+			if (empty($attribute_value)) {
+				continue;
+			}
+
+			// Clean attribute name
+			$taxonomy = str_replace('attribute_', '', $attribute_name);
+			$clean_name = str_replace('pa_', '', $taxonomy);
+
+			// Get the term object to get proper label
+			$term = get_term_by('slug', $attribute_value, $taxonomy);
+			$label = $term ? $term->name : $attribute_value;
+
+			// For creating variations, use the format from your migrator
 			$option_values[] = array(
-				'option_display_name' => ucfirst($clean_name),
-				'label' => $attribute_value
+				'option_display_name' => ucfirst(str_replace('-', ' ', $clean_name)),
+				'label' => $label
 			);
 		}
 
-		// Prepare variation data
+		// Prepare variation data using the same format as your migrator
 		$variation_data = array(
-			'sku' => $wc_variation->get_sku() ?: '',
-			'price' => (float) ($wc_variation->get_regular_price() ?: 0),
+			'sku' => $wc_variation->get_sku() ?: 'VAR-' . $wc_variation->get_id(),
+			'price' => (float) ($wc_variation->get_regular_price() ?: $parent_product->get_regular_price() ?: 0),
 			'option_values' => $option_values
 		);
+
+		// Add weight if available (no conversion needed - both use grams)
+		$variant_weight = $wc_variation->get_weight() ?: $parent_product->get_weight();
+		if ($variant_weight && $variant_weight > 0) {
+			$variation_data['weight'] = (float) $variant_weight;
+		}
+
+		// Handle variant sale price
+		$variant_sale_price = $wc_variation->get_sale_price();
+		if ($variant_sale_price !== '' && $variant_sale_price !== null && (float) $variant_sale_price > 0) {
+			$variation_data['sale_price'] = (float) $variant_sale_price;
+		}
+
+		// Retail price
+		$retail_price = $wc_variation->get_regular_price() ?: $parent_product->get_regular_price();
+		if ($retail_price > 0) {
+			$variation_data['retail_price'] = (float) $retail_price;
+		}
 
 		// Set inventory if WC manages stock
 		if ($wc_variation->get_manage_stock()) {
 			$variation_data['inventory_level'] = (int) ($wc_variation->get_stock_quantity() ?: 0);
 			$variation_data['inventory_tracking'] = 'variant';
+		}
+
+		// Add variant image if different from parent
+		$variant_image_id = $wc_variation->get_image_id();
+		if ($variant_image_id && $variant_image_id != $parent_product->get_image_id()) {
+			$image_url = wp_get_attachment_url($variant_image_id);
+			if ($image_url) {
+				$variation_data['image_url'] = $image_url;
+			}
 		}
 
 		// Create variation in BigCommerce

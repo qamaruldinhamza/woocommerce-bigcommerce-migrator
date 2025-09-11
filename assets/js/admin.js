@@ -980,16 +980,16 @@
         $('#stop-verification').prop('disabled', false);
         $('#verification-live-log').show();
 
-        this.addVerificationLogEntry('Starting verification and weight fixing process...');
+        this.addVerificationLogEntry('Starting verification and fix process for products and variations...');
 
-        // Start the first batch - no interval needed
+        // Use the main verification endpoint instead of weight-specific
         this.processVerificationBatch(batchSize);
     };
 
-// Process a single verification batch
+    // Update processVerificationBatch to use the main verification endpoint:
     WCBCMigrator.processVerificationBatch = function(batchSize) {
         $.ajax({
-            url: wcBcMigrator.apiUrl + 'verification/update-weights',
+            url: wcBcMigrator.apiUrl + 'verification/verify', // Changed from 'verification/update-weights'
             method: 'POST',
             data: { batch_size: batchSize },
             beforeSend: function(xhr) {
@@ -997,7 +997,7 @@
             },
             success: function(data) {
                 if (data.success) {
-                    WCBCMigrator.addVerificationLogEntry('Verification batch completed: ' + data.updated + ' products verified and weight fixed, ' + data.failed + ' failed. Remaining: ' + (data.remaining || 0));
+                    WCBCMigrator.addVerificationLogEntry('Verification batch completed: ' + data.verified + ' items verified, ' + data.failed + ' failed. Remaining: ' + (data.remaining || 0));
 
                     // Update stats
                     WCBCMigrator.loadVerificationStats();
@@ -1018,7 +1018,7 @@
                     } else {
                         // No more products to process or no products were processed
                         WCBCMigrator.stopVerification();
-                        WCBCMigrator.addLog('success', 'Verification and weight fixing completed!');
+                        WCBCMigrator.addLog('success', 'Verification and fixing completed for all products and variations!');
                     }
                 } else {
                     WCBCMigrator.addVerificationLogEntry('Error: ' + data.message, 'error');

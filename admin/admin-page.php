@@ -172,7 +172,7 @@ $client_secret = get_option('wc_bc_client_secret', '');
                             <input type="number" class="batch-size-input" id="verify-batch-size" value="50" min="1" max="200">
                         </label>
                         <button class="button" id="start-verification">
-                            <?php _e('Start Verification & Weight Fix', 'wc-bc-migrator'); ?>
+                            <?php _e('Start Verification & Fix', 'wc-bc-migrator'); ?>
                         </button>
                         <button class="button button-secondary" id="stop-verification" disabled>
 							<?php _e('Stop Verification', 'wc-bc-migrator'); ?>
@@ -208,6 +208,11 @@ $client_secret = get_option('wc_bc_client_secret', '');
                         <div class="progress-bar" id="cf-update-progress-bar" style="display:none;">
                             <div class="progress-fill" id="cf-update-progress-fill">0%</div>
                         </div>
+                    </div>
+                    <div class="action-group">
+                        <h3><?php _e('Run Verification', 'wc-bc-migrator'); ?></h3>
+                        <p><?php _e('Verify products and variations in BigCommerce, checking pricing, inventory, SKUs, names, weights, and supplier data. Automatically fixes issues found.', 'wc-bc-migrator'); ?></p>
+                        <!-- ... rest of the section -->
                     </div>
                 </div>
 

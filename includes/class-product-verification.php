@@ -13,7 +13,9 @@ class WC_BC_Product_Verification {
 	const VERIFICATION_COLUMNS = array(
 		'id' => 'bigint(20) NOT NULL AUTO_INCREMENT',
 		'wc_product_id' => 'bigint(20) NOT NULL',
+		'wc_variation_id' => 'bigint(20) NULL',
 		'bc_product_id' => 'bigint(20) NOT NULL',
+		'bc_variation_id' => 'bigint(20) NULL',
 		'verification_status' => "varchar(20) NOT NULL DEFAULT 'pending'",
 		'verification_message' => 'text',
 		'last_verified' => 'datetime',
@@ -43,15 +45,11 @@ class WC_BC_Product_Verification {
 
 		$table_name = $this->verification_table;
 
-		// Check if table exists
-		$table_exists = $wpdb->get_var("SHOW TABLES LIKE '$table_name'") === $table_name;
+		// Always drop and recreate table to ensure correct structure
+		$wpdb->query("DROP TABLE IF EXISTS $table_name");
 
-		if (!$table_exists) {
-			$this->create_verification_table();
-			error_log("Created verification table: $table_name");
-		} else {
-			error_log("Verification table already exists: $table_name");
-		}
+		$this->create_verification_table();
+		error_log("Created fresh verification table: $table_name");
 	}
 
 	/**
@@ -70,13 +68,13 @@ class WC_BC_Product_Verification {
 		}
 
 		$sql = "CREATE TABLE $table_name (
-            " . implode(",\n            ", $columns) . ",
-            PRIMARY KEY (id),
-            UNIQUE KEY unique_wc_product (wc_product_id),
-            KEY idx_bc_product_id (bc_product_id),
-            KEY idx_verification_status (verification_status),
-            KEY idx_last_verified (last_verified)
-        ) $charset_collate;";
+        " . implode(",\n            ", $columns) . ",
+        PRIMARY KEY (id),
+        UNIQUE KEY unique_wc_product_variation (wc_product_id, wc_variation_id),
+        KEY idx_bc_product_id (bc_product_id),
+        KEY idx_verification_status (verification_status),
+        KEY idx_last_verified (last_verified)
+    ) $charset_collate;";
 
 		require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
 		dbDelta($sql);
@@ -97,49 +95,69 @@ class WC_BC_Product_Verification {
 		$migrator_table = $wpdb->prefix . WC_BC_MIGRATOR_TABLE;
 		$verification_table = $this->verification_table;
 
-		// Get all successfully migrated products (not variations)
-		$migrated_products = $wpdb->get_results(
-			"SELECT wc_product_id, bc_product_id 
-             FROM $migrator_table 
-             WHERE wc_variation_id IS NULL 
-             AND bc_product_id IS NOT NULL 
-             AND status = 'success'"
+		// Get all successfully migrated products AND variations
+		$migrated_items = $wpdb->get_results(
+			"SELECT wc_product_id, wc_variation_id, bc_product_id, bc_variation_id 
+         FROM $migrator_table 
+         WHERE bc_product_id IS NOT NULL 
+         AND status = 'success'"
 		);
 
 		$inserted = 0;
 		$skipped = 0;
 
-		foreach ($migrated_products as $product) {
-			// Check if already exists in verification table
+		foreach ($migrated_items as $item) {
+			// Check if this record already exists
+			$where_clause = "wc_product_id = %d";
+			$where_values = array($item->wc_product_id);
+
+			if ($item->wc_variation_id) {
+				$where_clause .= " AND wc_variation_id = %d";
+				$where_values[] = $item->wc_variation_id;
+			} else {
+				$where_clause .= " AND wc_variation_id IS NULL";
+			}
+
 			$exists = $wpdb->get_var($wpdb->prepare(
-				"SELECT id FROM $verification_table WHERE wc_product_id = %d",
-				$product->wc_product_id
+				"SELECT id FROM $verification_table WHERE $where_clause",
+				$where_values
 			));
 
-			if (!$exists) {
-				$result = $wpdb->insert(
-					$verification_table,
-					array(
-						'wc_product_id' => $product->wc_product_id,
-						'bc_product_id' => $product->bc_product_id,
-						'verification_status' => 'pending'
-					),
-					array('%d', '%d', '%s')
-				);
-
-				if ($result) {
-					$inserted++;
-				} else {
-					error_log("Failed to insert verification record for WC Product: {$product->wc_product_id}");
-				}
-			} else {
+			if ($exists) {
 				$skipped++;
+				continue;
+			}
+
+			// Prepare insert data
+			$insert_data = array(
+				'wc_product_id' => $item->wc_product_id,
+				'bc_product_id' => $item->bc_product_id,
+				'verification_status' => 'pending'
+			);
+
+			$format = array('%d', '%d', '%s');
+
+			// Add variation data if it exists
+			if ($item->wc_variation_id) {
+				$insert_data['wc_variation_id'] = $item->wc_variation_id;
+				$format[] = '%d';
+			}
+
+			if ($item->bc_variation_id) {
+				$insert_data['bc_variation_id'] = $item->bc_variation_id;
+				$format[] = '%d';
+			}
+
+			$result = $wpdb->insert($verification_table, $insert_data, $format);
+
+			if ($result) {
+				$inserted++;
 			}
 		}
 
 		return array(
 			'success' => true,
-			'total_migrated' => count($migrated_products),
+			'total_migrated' => count($migrated_items),
 			'inserted' => $inserted,
 			'skipped' => $skipped
 		);
@@ -194,43 +212,35 @@ class WC_BC_Product_Verification {
 		);
 	}
 
-	/**
-	 * Verify a single product (verification only)
-	 */
 	private function verify_single_product($product_record) {
 		global $wpdb;
 
 		try {
-			// Check if product exists in BigCommerce
-			$bc_product = $this->bc_api->get_product($product_record->bc_product_id);
+			// Determine if this is a variation or main product
+			$is_variation = !empty($product_record->wc_variation_id);
 
-			if (isset($bc_product['data']['id']) && $bc_product['data']['id'] == $product_record->bc_product_id) {
-				// Product exists and matches
-				$update_result = $wpdb->update(
-					$this->verification_table,
-					array(
-						'verification_status' => 'verified',
-						'verification_message' => 'Product successfully verified in BigCommerce',
-						'last_verified' => current_time('mysql')
-					),
-					array('id' => $product_record->id),
-					array('%s', '%s', '%s'),
-					array('%d')
-				);
-
-				if ($update_result) {
-					error_log("Verified product: WC ID {$product_record->wc_product_id}, BC ID {$product_record->bc_product_id}");
-					return array('verified' => true, 'message' => 'Product verified successfully');
-				} else {
-					throw new Exception('Failed to update verification status in database');
-				}
-
+			if ($is_variation) {
+				$result = $this->verify_and_fix_variation($product_record);
 			} else {
-				throw new Exception('Product not found in BigCommerce or ID mismatch');
+				$result = $this->verify_and_fix_main_product($product_record);
 			}
 
+			// Update verification status
+			$wpdb->update(
+				$this->verification_table,
+				array(
+					'verification_status' => $result['success'] ? 'verified' : 'failed',
+					'verification_message' => $result['message'],
+					'last_verified' => current_time('mysql')
+				),
+				array('id' => $product_record->id),
+				array('%s', '%s', '%s'),
+				array('%d')
+			);
+
+			return array('verified' => $result['success'], 'message' => $result['message']);
+
 		} catch (Exception $e) {
-			// Product verification failed
 			$error_message = $e->getMessage();
 
 			$wpdb->update(
@@ -245,9 +255,264 @@ class WC_BC_Product_Verification {
 				array('%d')
 			);
 
-			error_log("Failed to verify product: WC ID {$product_record->wc_product_id}, BC ID {$product_record->bc_product_id}, Error: {$error_message}");
-
 			return array('verified' => false, 'message' => $error_message);
+		}
+	}
+
+	/**
+	 * Verify and fix main product
+	 */
+	private function verify_and_fix_main_product($product_record) {
+		// Get BC product
+		$bc_product = $this->bc_api->get_product($product_record->bc_product_id);
+
+		if (!isset($bc_product['data']['id'])) {
+			return array('success' => false, 'message' => 'Product not found in BigCommerce');
+		}
+
+		// Get WC product
+		$wc_product = wc_get_product($product_record->wc_product_id);
+		if (!$wc_product) {
+			return array('success' => false, 'message' => 'WooCommerce product not found');
+		}
+
+		$fixes = array();
+		$fix_messages = array();
+		$issues = array();
+
+		// 1. Check and fix pricing
+		$this->check_and_fix_pricing($bc_product['data'], $wc_product, $fixes, $fix_messages, $issues);
+
+		// 2. Check and fix inventory
+		$this->check_and_fix_inventory($wc_product, $fixes, $fix_messages, $issues);
+
+		// 3. Check and fix basic product data
+		$this->check_and_fix_basic_data($bc_product['data'], $wc_product, $fixes, $fix_messages, $issues);
+
+		// 4. Check and fix supplier
+		$this->check_and_fix_supplier($bc_product['data'], $product_record->wc_product_id, $fixes, $fix_messages, $issues);
+
+		// Apply fixes if any
+		if (!empty($fixes)) {
+			$result = $this->bc_api->update_product($product_record->bc_product_id, $fixes);
+
+			if (isset($result['error'])) {
+				return array('success' => false, 'message' => 'Fix failed: ' . $result['error']);
+			}
+		}
+
+		// Build message
+		$message = 'Product verified';
+		if (!empty($fix_messages)) {
+			$message .= ' and fixed: ' . implode(', ', $fix_messages);
+		}
+		if (!empty($issues)) {
+			$message .= ' | Issues: ' . implode(', ', $issues);
+		}
+
+		return array('success' => true, 'message' => $message);
+	}
+
+	private function check_and_fix_pricing($bc_data, $wc_product, &$fixes, &$fix_messages, &$issues) {
+		$bc_price = $bc_data['price'] ?? 0;
+		$wc_price = $wc_product->get_regular_price();
+
+		if (($bc_price == 0 || empty($bc_price)) && $wc_price && $wc_price > 0) {
+			$fixes['price'] = (float) $wc_price;
+			$fixes['retail_price'] = (float) $wc_price;
+			$fix_messages[] = "Fixed price: {$wc_price}";
+		} elseif ($bc_price != $wc_price && $wc_price) {
+			$issues[] = "price_mismatch(BC:{$bc_price},WC:{$wc_price})";
+		}
+
+		// Sale price
+		$wc_sale_price = $wc_product->get_sale_price();
+		if ($wc_sale_price && $wc_sale_price > 0) {
+			$fixes['sale_price'] = (float) $wc_sale_price;
+			$fix_messages[] = "Updated sale price: {$wc_sale_price}";
+		}
+	}
+
+	private function check_and_fix_inventory($wc_product, &$fixes, &$fix_messages, &$issues) {
+		if ($wc_product->is_type('variable')) {
+			$fixes['inventory_tracking'] = 'variant'; // This is crucial
+			$fix_messages[] = "Set inventory tracking to variant level";
+		} elseif ($wc_product->get_manage_stock()) {
+			$fixes['inventory_tracking'] = 'product';
+			$fixes['inventory_level'] = (int) ($wc_product->get_stock_quantity() ?: 0);
+			$fix_messages[] = "Updated inventory: " . $fixes['inventory_level'];
+		}
+	}
+
+	private function check_and_fix_basic_data($bc_data, $wc_product, &$fixes, &$fix_messages, &$issues) {
+		// SKU
+		$bc_sku = $bc_data['sku'] ?? '';
+		$wc_sku = $wc_product->get_sku();
+
+		if ($bc_sku !== $wc_sku && !empty($wc_sku)) {
+			$fixes['sku'] = $wc_sku;
+			$fix_messages[] = "Fixed SKU: {$bc_sku} → {$wc_sku}";
+		} elseif (empty($wc_sku)) {
+			$issues[] = "sku_missing";
+		}
+
+		// Name
+		$bc_name = $bc_data['name'] ?? '';
+		$wc_name = $wc_product->get_name();
+
+		if ($bc_name !== $wc_name && !empty($wc_name)) {
+			$fixes['name'] = $wc_name;
+			$fix_messages[] = "Fixed name";
+		}
+
+		// Weight
+		$bc_weight = $bc_data['weight'] ?? 0;
+		$wc_weight = $wc_product->get_weight();
+
+		if ($wc_weight && (empty($bc_weight) || $bc_weight == 0)) {
+			$weight_data = $this->fix_and_prepare_weight($wc_weight);
+			$fixes['weight'] = (float) $weight_data['corrected_weight_grams'];
+			$fix_messages[] = "Fixed weight: {$wc_weight} → {$weight_data['corrected_weight_grams']}g";
+		}
+
+		// Images count check only
+		$bc_images = $bc_data['images'] ?? array();
+		$wc_image_ids = $wc_product->get_gallery_image_ids();
+		$wc_featured_image = $wc_product->get_image_id();
+		$total_wc_images = count($wc_image_ids) + ($wc_featured_image ? 1 : 0);
+
+		if (count($bc_images) === 0 && $total_wc_images > 0) {
+			$issues[] = "images_missing";
+		} elseif (count($bc_images) !== $total_wc_images) {
+			$issues[] = "image_count_mismatch";
+		}
+	}
+
+	private function check_and_fix_supplier($bc_data, $wc_product_id, &$fixes, &$fix_messages, &$issues) {
+		$supplier_name = $this->get_supplier_name($wc_product_id);
+		$existing_fields = $bc_data['custom_fields'] ?? array();
+		$updated_fields = array();
+		$supplier_exists = false;
+
+		foreach ($existing_fields as $field) {
+			if ($field['name'] === '__supplier') {
+				$supplier_exists = true;
+				$updated_fields[] = array(
+					'id' => $field['id'],
+					'name' => '__supplier',
+					'value' => $supplier_name ?: ''
+				);
+			} else {
+				$updated_fields[] = $field;
+			}
+		}
+
+		if (!$supplier_exists) {
+			$updated_fields[] = array(
+				'name' => '__supplier',
+				'value' => $supplier_name ?: ''
+			);
+			$fix_messages[] = "Added supplier field";
+		}
+
+		$fixes['custom_fields'] = $updated_fields;
+	}
+
+	/**
+	 * Verify and fix variation
+	 */
+	private function verify_and_fix_variation($product_record) {
+		// Get BC variant
+		$bc_variant = $this->bc_api->get_product_variant($product_record->bc_product_id, $product_record->bc_variation_id);
+
+		if (!isset($bc_variant['data']['id'])) {
+			return array('success' => false, 'message' => 'Variation not found in BigCommerce');
+		}
+
+		// Get WC variation
+		$wc_variation = wc_get_product($product_record->wc_variation_id);
+		if (!$wc_variation) {
+			return array('success' => false, 'message' => 'WooCommerce variation not found');
+		}
+
+		$fixes = array();
+		$fix_messages = array();
+
+		// 1. Fix variation pricing
+		$bc_price = $bc_variant['data']['price'] ?? 0;
+		$wc_price = $wc_variation->get_regular_price();
+
+		if (($bc_price == 0 || empty($bc_price)) && $wc_price && $wc_price > 0) {
+			$fixes['price'] = (float) $wc_price;
+			$fix_messages[] = "Fixed price: {$wc_price}";
+		}
+
+		// 2. Fix variation inventory - THIS WAS MISSING PROPER LOGIC
+		if ($wc_variation->get_manage_stock()) {
+			$wc_stock = (int) ($wc_variation->get_stock_quantity() ?: 0);
+			$bc_stock = (int) ($bc_variant['data']['inventory_level'] ?? 0);
+
+			if ($bc_stock !== $wc_stock) {
+				$fixes['inventory_level'] = $wc_stock;
+				$fix_messages[] = "Updated stock: {$bc_stock} → {$wc_stock}";
+			}
+		} else {
+			// If WC variation doesn't manage stock, set to 0 or high number
+			$fixes['inventory_level'] = 9999; // or 0, depending on your preference
+			$fix_messages[] = "Set unlimited stock (WC doesn't track)";
+		}
+
+		// 3. Fix variation SKU
+		$bc_sku = $bc_variant['data']['sku'] ?? '';
+		$wc_sku = $wc_variation->get_sku();
+
+		if ($bc_sku !== $wc_sku && !empty($wc_sku)) {
+			$fixes['sku'] = $wc_sku;
+			$fix_messages[] = "Fixed SKU: {$bc_sku} → {$wc_sku}";
+		}
+
+		// Apply fixes
+		if (!empty($fixes)) {
+			$result = $this->bc_api->update_product_variant($product_record->bc_product_id, $product_record->bc_variation_id, $fixes);
+
+			if (isset($result['error'])) {
+				return array('success' => false, 'message' => 'Variation fix failed: ' . $result['error']);
+			}
+
+			$message = 'Variation verified and fixed: ' . implode(', ', $fix_messages);
+		} else {
+			$message = 'Variation verified - no fixes needed';
+		}
+
+		return array('success' => true, 'message' => $message);
+	}
+
+	/**
+	 * Get supplier name (reuse from sync system)
+	 */
+	private function get_supplier_name($wc_product_id) {
+		global $wpdb;
+
+		try {
+			$supplier_id = $wpdb->get_var($wpdb->prepare(
+				"SELECT supplier_id FROM {$wpdb->prefix}atum_product_data WHERE product_id = %d",
+				$wc_product_id
+			));
+
+			if (!$supplier_id) {
+				return null;
+			}
+
+			$supplier_name = $wpdb->get_var($wpdb->prepare(
+				"SELECT post_title FROM {$wpdb->prefix}posts WHERE ID = %d AND post_type = 'atum_supplier'",
+				$supplier_id
+			));
+
+			return $supplier_name ?: null;
+
+		} catch (Exception $e) {
+			error_log("Error getting supplier for product {$wc_product_id}: " . $e->getMessage());
+			return null;
 		}
 	}
 

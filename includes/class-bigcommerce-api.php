@@ -7,6 +7,7 @@ class WC_BC_BigCommerce_API {
 	private $store_hash;
 	private $access_token;
 	private $api_url;
+	private $api_v2_url;
 
 	public function __construct() {
 		$this->store_hash = get_option('wc_bc_store_hash');
@@ -449,5 +450,23 @@ class WC_BC_BigCommerce_API {
 	public function update_product_custom_field($product_id, $custom_field_id, $data) {
 		$endpoint = "catalog/products/{$product_id}/custom-fields/{$custom_field_id}";
 		return $this->make_request($endpoint, 'PUT', $data, 'v3');
+	}
+
+	/**
+	 * Update a product variant
+	 */
+	public function update_product_variant($product_id, $variant_id, $variant_data) {
+		$endpoint = "catalog/products/{$product_id}/variants/{$variant_id}";
+
+		return $this->make_request($endpoint, 'PUT', $variant_data);
+	}
+
+	/**
+	 * Get product variants
+	 */
+	public function get_product_variants($product_id) {
+		$endpoint = "catalog/products/{$product_id}/variants";
+
+		return $this->make_request($endpoint, 'GET');
 	}
 }

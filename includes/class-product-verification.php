@@ -318,6 +318,11 @@ class WC_BC_Product_Verification {
 		// Get BC product
 		$bc_product = $this->bc_api->get_product($product_record->bc_product_id);
 
+		// Check for API errors
+		if (isset($bc_product['error'])) {
+			return array('success' => false, 'message' => 'Product not found in BigCommerce: ' . $bc_product['error']);
+		}
+
 		if (!isset($bc_product['data']['id'])) {
 			return array('success' => false, 'message' => 'Product not found in BigCommerce');
 		}
@@ -344,7 +349,6 @@ class WC_BC_Product_Verification {
 		// 4. Check and fix supplier
 		$this->check_and_fix_supplier($bc_product['data'], $product_record->wc_product_id, $fixes, $fix_messages, $issues);
 
-		// Apply fixes if any
 		if (!empty($fixes)) {
 			$result = $this->bc_api->update_product($product_record->bc_product_id, $fixes);
 
@@ -445,37 +449,63 @@ class WC_BC_Product_Verification {
 		$existing_fields = $bc_data['custom_fields'] ?? array();
 		$updated_fields = array();
 		$supplier_exists = false;
+		$needs_update = false;
 
 		foreach ($existing_fields as $field) {
 			if ($field['name'] === '__supplier') {
 				$supplier_exists = true;
-				$updated_fields[] = array(
-					'id' => $field['id'],
-					'name' => '__supplier',
-					'value' => $supplier_name ?: ''
-				);
+				$current_value = $field['value'] ?? '';
+				$new_value = $supplier_name ?: '';
+
+				// Only update if values are different
+				if ($current_value !== $new_value) {
+					$updated_fields[] = array(
+						'id' => $field['id'],
+						'name' => '__supplier',
+						'value' => $new_value
+					);
+					$needs_update = true;
+					$fix_messages[] = "Updated supplier: {$current_value} → {$new_value}";
+				} else {
+					$updated_fields[] = $field; // Keep existing
+				}
 			} else {
-				$updated_fields[] = $field;
+				$updated_fields[] = $field; // Keep other fields
 			}
 		}
 
-		if (!$supplier_exists) {
+		// Only add supplier field if it doesn't exist AND we have a supplier
+		if (!$supplier_exists && !empty($supplier_name)) {
 			$updated_fields[] = array(
 				'name' => '__supplier',
-				'value' => $supplier_name ?: ''
+				'value' => $supplier_name
 			);
-			$fix_messages[] = "Added supplier field";
+			$needs_update = true;
+			$fix_messages[] = "Added supplier field: {$supplier_name}";
 		}
 
-		$fixes['custom_fields'] = $updated_fields;
+		// Only include custom_fields in fixes if we actually need to update them
+		if ($needs_update) {
+			$fixes['custom_fields'] = $updated_fields;
+		}
 	}
 
 	/**
 	 * Verify and fix variation
 	 */
 	private function verify_and_fix_variation($product_record) {
+		// First check if the variation record is valid
+		if (empty($product_record->bc_variation_id)) {
+			return array('success' => false, 'message' => 'No BigCommerce variation ID found');
+		}
+
 		// Get BC variant
 		$bc_variant = $this->bc_api->get_product_variant($product_record->bc_product_id, $product_record->bc_variation_id);
+
+		// Check for API errors
+		if (isset($bc_variant['error'])) {
+			return array('success' => false, 'message' => 'Variation not found in BigCommerce: ' . $bc_variant['error']);
+		}
 
 		if (!isset($bc_variant['data']['id'])) {
 			return array('success' => false, 'message' => 'Variation not found in BigCommerce');
@@ -490,7 +520,7 @@ class WC_BC_Product_Verification {
 		$fixes = array();
 		$fix_messages = array();
 
-		// 1. Fix variation pricing
+		// 1. Fix variation pricing (only if needed)
 		$bc_price = $bc_variant['data']['price'] ?? 0;
 		$wc_price = $wc_variation->get_regular_price();
 
@@ -499,7 +529,7 @@ class WC_BC_Product_Verification {
 			$fix_messages[] = "Fixed price: {$wc_price}";
 		}
 
-		// 2. Fix variation inventory - THIS WAS MISSING PROPER LOGIC
+		// 2. Fix variation inventory (only if different)
 		if ($wc_variation->get_manage_stock()) {
 			$wc_stock = (int) ($wc_variation->get_stock_quantity() ?: 0);
 			$bc_stock = (int) ($bc_variant['data']['inventory_level'] ?? 0);
@@ -508,13 +538,9 @@ class WC_BC_Product_Verification {
 				$fixes['inventory_level'] = $wc_stock;
 				$fix_messages[] = "Updated stock: {$bc_stock} → {$wc_stock}";
 			}
-		} else {
-			// If WC variation doesn't manage stock, set to 0 or high number
-			$fixes['inventory_level'] = 9999; // or 0, depending on your preference
-			$fix_messages[] = "Set unlimited stock (WC doesn't track)";
 		}
 
-		// 3. Fix variation SKU
+		// 3. Fix variation SKU (only if different)
 		$bc_sku = $bc_variant['data']['sku'] ?? '';
 		$wc_sku = $wc_variation->get_sku();
 
@@ -523,7 +549,7 @@ class WC_BC_Product_Verification {
 			$fix_messages[] = "Fixed SKU: {$bc_sku} → {$wc_sku}";
 		}
 
-		// Apply fixes
+		// Apply fixes only if needed
 		if (!empty($fixes)) {
 			$result = $this->bc_api->update_product_variant($product_record->bc_product_id, $product_record->bc_variation_id, $fixes);
 

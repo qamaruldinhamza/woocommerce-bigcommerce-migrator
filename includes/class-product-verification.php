@@ -46,10 +46,20 @@ class WC_BC_Product_Verification {
 		$table_name = $this->verification_table;
 
 		// Always drop and recreate table to ensure correct structure
-		$wpdb->query("DROP TABLE IF EXISTS $table_name");
+		$drop_result = $wpdb->query("DROP TABLE IF EXISTS $table_name");
+		error_log("Dropped verification table result: " . ($drop_result !== false ? 'success' : 'failed'));
 
 		$this->create_verification_table();
-		error_log("Created fresh verification table: $table_name");
+
+		// Verify table was actually created
+		$table_exists = $wpdb->get_var("SHOW TABLES LIKE '$table_name'") === $table_name;
+		error_log("Verification table exists after creation: " . ($table_exists ? 'yes' : 'no'));
+
+		if ($table_exists) {
+			error_log("Created fresh verification table: $table_name");
+		} else {
+			error_log("FAILED to create verification table: $table_name");
+		}
 	}
 
 	/**
@@ -95,6 +105,16 @@ class WC_BC_Product_Verification {
 		$migrator_table = $wpdb->prefix . WC_BC_MIGRATOR_TABLE;
 		$verification_table = $this->verification_table;
 
+		// Debug: Check if verification table exists
+		$table_exists = $wpdb->get_var("SHOW TABLES LIKE '$verification_table'") === $verification_table;
+		if (!$table_exists) {
+			error_log("Verification table does not exist: $verification_table");
+			return array(
+				'success' => false,
+				'message' => 'Verification table does not exist'
+			);
+		}
+
 		// Get all successfully migrated products AND variations
 		$migrated_items = $wpdb->get_results(
 			"SELECT wc_product_id, wc_variation_id, bc_product_id, bc_variation_id 
@@ -103,8 +123,11 @@ class WC_BC_Product_Verification {
          AND status = 'success'"
 		);
 
+		error_log("Found " . count($migrated_items) . " migrated items to verify");
+
 		$inserted = 0;
 		$skipped = 0;
+		$errors = 0;
 
 		foreach ($migrated_items as $item) {
 			// Check if this record already exists
@@ -150,16 +173,27 @@ class WC_BC_Product_Verification {
 
 			$result = $wpdb->insert($verification_table, $insert_data, $format);
 
-			if ($result) {
+			if ($result === false) {
+				$errors++;
+				error_log("Failed to insert verification record for WC Product: {$item->wc_product_id}, Error: " . $wpdb->last_error);
+			} else {
 				$inserted++;
 			}
+
+			// Log every 1000 insertions
+			if (($inserted + $skipped + $errors) % 1000 == 0) {
+				error_log("Progress: Inserted: $inserted, Skipped: $skipped, Errors: $errors");
+			}
 		}
+
+		error_log("Final result: Inserted: $inserted, Skipped: $skipped, Errors: $errors");
 
 		return array(
 			'success' => true,
 			'total_migrated' => count($migrated_items),
 			'inserted' => $inserted,
-			'skipped' => $skipped
+			'skipped' => $skipped,
+			'errors' => $errors
 		);
 	}
 

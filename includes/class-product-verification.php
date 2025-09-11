@@ -1036,12 +1036,12 @@ class WC_BC_Product_Verification {
 
 				// Check existing custom fields
 				foreach ($existing_custom_fields as $field) {
-					if ($field['name'] === 'weight_range_grams') {
+					if ($field['name'] === '__weight_range_grams') {
 						$weight_range_exists = true;
 						// Update the existing field
 						$updated_custom_fields[] = array(
 							'id' => $field['id'],
-							'name' => 'weight_range_grams',
+							'name' => '__weight_range_grams',
 							'value' => $weight_data['weight_range']
 						);
 					} else {
@@ -1053,7 +1053,7 @@ class WC_BC_Product_Verification {
 				// If weight_range_grams doesn't exist, add it
 				if (!$weight_range_exists) {
 					$updated_custom_fields[] = array(
-						'name' => 'weight_range_grams',
+						'name' => '__weight_range_grams',
 						'value' => $weight_data['weight_range']
 					);
 				}

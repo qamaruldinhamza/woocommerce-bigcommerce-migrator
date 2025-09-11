@@ -325,13 +325,9 @@ class WC_BC_REST_API {
 	public function init_verification() {
 		try {
 			$verifier = new WC_BC_Product_Verification();
-			$status = $verifier->get_table_status();
+			$result = $verifier->initialize_verification_system(); // Call the new method
 
-			return new WP_REST_Response(array(
-				'success' => true,
-				'message' => 'Verification system initialized',
-				'table_status' => $status
-			), 200);
+			return new WP_REST_Response($result, 200);
 		} catch (Exception $e) {
 			return new WP_REST_Response(array(
 				'success' => false,

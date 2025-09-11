@@ -26,7 +26,7 @@ class WC_BC_Product_Verification {
 	public function __construct() {
 		$this->bc_api = new WC_BC_BigCommerce_API();
 		$this->verification_table = $this->get_verification_table_name();
-		$this->ensure_verification_table_exists();
+		$this->ensure_verification_table_exists(); // This drops and recreates the table
 	}
 
 	/**
@@ -45,7 +45,26 @@ class WC_BC_Product_Verification {
 
 		$table_name = $this->verification_table;
 
-		// Always drop and recreate table to ensure correct structure
+		// Check if table exists
+		$table_exists = $wpdb->get_var("SHOW TABLES LIKE '$table_name'") === $table_name;
+
+		if (!$table_exists) {
+			$this->create_verification_table();
+			error_log("Created verification table: $table_name");
+		} else {
+			error_log("Verification table already exists: $table_name");
+		}
+	}
+
+	/**
+	 * Initialize verification system (drops and recreates table)
+	 */
+	public function initialize_verification_system() {
+		global $wpdb;
+
+		$table_name = $this->verification_table;
+
+		// Drop and recreate table for fresh start
 		$drop_result = $wpdb->query("DROP TABLE IF EXISTS $table_name");
 		error_log("Dropped verification table result: " . ($drop_result !== false ? 'success' : 'failed'));
 
@@ -55,11 +74,10 @@ class WC_BC_Product_Verification {
 		$table_exists = $wpdb->get_var("SHOW TABLES LIKE '$table_name'") === $table_name;
 		error_log("Verification table exists after creation: " . ($table_exists ? 'yes' : 'no'));
 
-		if ($table_exists) {
-			error_log("Created fresh verification table: $table_name");
-		} else {
-			error_log("FAILED to create verification table: $table_name");
-		}
+		return array(
+			'success' => $table_exists,
+			'message' => $table_exists ? 'Verification system initialized' : 'Failed to create table'
+		);
 	}
 
 	/**

@@ -579,45 +579,34 @@ class WC_BC_Product_Verification {
 			return array('success' => false, 'message' => 'WooCommerce variation not found');
 		}
 
-		// Get parent product to access options
+		// Get parent product
 		$parent_product = wc_get_product($wc_variation->get_parent_id());
 		if (!$parent_product) {
 			return array('success' => false, 'message' => 'Parent product not found');
 		}
 
-		// Get variation attributes
-		$attributes = $wc_variation->get_variation_attributes();
-		$option_values = array();
+		// Step 1: Ensure product options exist
+		$option_mappings = $this->ensure_product_options_exist($parent_product, $product_record->bc_product_id);
 
-		foreach ($attributes as $attribute_name => $attribute_value) {
-			// Skip if no value set
-			if (empty($attribute_value)) {
-				continue;
-			}
-
-			// Clean attribute name
-			$taxonomy = str_replace('attribute_', '', $attribute_name);
-			$clean_name = str_replace('pa_', '', $taxonomy);
-
-			// Get the term object to get proper label
-			$term = get_term_by('slug', $attribute_value, $taxonomy);
-			$label = $term ? $term->name : $attribute_value;
-
-			// For creating variations, use the format from your migrator
-			$option_values[] = array(
-				'option_display_name' => ucfirst(str_replace('-', ' ', $clean_name)),
-				'label' => $label
-			);
+		if (empty($option_mappings)) {
+			return array('success' => false, 'message' => 'Failed to create or find product options');
 		}
 
-		// Prepare variation data using the same format as your migrator
+		// Step 2: Prepare option values for the variation
+		$option_values = $this->prepare_variation_option_values($wc_variation, $option_mappings);
+
+		if (empty($option_values)) {
+			return array('success' => false, 'message' => 'No valid option values found for variation');
+		}
+
+		// Step 3: Create the variation
 		$variation_data = array(
 			'sku' => $wc_variation->get_sku() ?: 'VAR-' . $wc_variation->get_id(),
 			'price' => (float) ($wc_variation->get_regular_price() ?: $parent_product->get_regular_price() ?: 0),
 			'option_values' => $option_values
 		);
 
-		// Add weight if available (no conversion needed - both use grams)
+		// Add weight if available (no conversion needed)
 		$variant_weight = $wc_variation->get_weight() ?: $parent_product->get_weight();
 		if ($variant_weight && $variant_weight > 0) {
 			$variation_data['weight'] = (float) $variant_weight;
@@ -638,16 +627,6 @@ class WC_BC_Product_Verification {
 		// Set inventory if WC manages stock
 		if ($wc_variation->get_manage_stock()) {
 			$variation_data['inventory_level'] = (int) ($wc_variation->get_stock_quantity() ?: 0);
-			$variation_data['inventory_tracking'] = 'variant';
-		}
-
-		// Add variant image if different from parent
-		$variant_image_id = $wc_variation->get_image_id();
-		if ($variant_image_id && $variant_image_id != $parent_product->get_image_id()) {
-			$image_url = wp_get_attachment_url($variant_image_id);
-			if ($image_url) {
-				$variation_data['image_url'] = $image_url;
-			}
 		}
 
 		// Create variation in BigCommerce
@@ -672,6 +651,141 @@ class WC_BC_Product_Verification {
 		}
 
 		return array('success' => false, 'message' => 'Failed to create variation - no ID returned');
+	}
+
+	/**
+	 * Ensure product options exist for the BC product
+	 */
+	private function ensure_product_options_exist($parent_product, $bc_product_id) {
+		// Get existing options for this BC product
+		$existing_options = $this->bc_api->get_product_options($bc_product_id);
+		$option_mappings = array();
+
+		if (isset($existing_options['data'])) {
+			// Map existing options
+			foreach ($existing_options['data'] as $option) {
+				$clean_name = strtolower(str_replace([' ', '-', '_'], '', $option['display_name']));
+				$option_mappings[$clean_name] = array(
+					'option_id' => $option['id'],
+					'display_name' => $option['display_name'],
+					'values' => array()
+				);
+
+				// Map existing option values
+				if (isset($option['option_values'])) {
+					foreach ($option['option_values'] as $value) {
+						$option_mappings[$clean_name]['values'][strtolower($value['label'])] = array(
+							'id' => $value['id'],
+							'label' => $value['label']
+						);
+					}
+				}
+			}
+		}
+
+		// Check what options we need based on WC variations
+		$wc_attributes = $parent_product->get_variation_attributes();
+
+		foreach ($wc_attributes as $attribute_name => $values) {
+			$clean_name = str_replace('pa_', '', $attribute_name);
+			$clean_key = strtolower(str_replace([' ', '-', '_'], '', $clean_name));
+
+			// Skip if option already exists
+			if (isset($option_mappings[$clean_key])) {
+				continue;
+			}
+
+			// Create missing option
+			$display_name = ucfirst(str_replace(['-', '_'], ' ', $clean_name));
+			$option_type = ($clean_name === 'size') ? 'rectangles' : 'dropdown';
+
+			// Get all possible values for this attribute
+			$option_values = array();
+			$taxonomy = 'pa_' . $clean_name;
+
+			foreach ($values as $value_slug) {
+				$term = get_term_by('slug', $value_slug, $taxonomy);
+				if ($term) {
+					$option_values[] = array(
+						'label' => $term->name,
+						'sort_order' => 0,
+						'is_default' => false
+					);
+				}
+			}
+
+			// Create the option with values
+			$option_data = array(
+				'product_id' => $bc_product_id,
+				'display_name' => $display_name,
+				'type' => $option_type,
+				'sort_order' => 0,
+				'option_values' => $option_values
+			);
+
+			$result = $this->bc_api->create_product_option($bc_product_id, $option_data);
+
+			if (isset($result['data']['id'])) {
+				$option_mappings[$clean_key] = array(
+					'option_id' => $result['data']['id'],
+					'display_name' => $display_name,
+					'values' => array()
+				);
+
+				// Map the created values
+				if (isset($result['data']['option_values'])) {
+					foreach ($result['data']['option_values'] as $value) {
+						$option_mappings[$clean_key]['values'][strtolower($value['label'])] = array(
+							'id' => $value['id'],
+							'label' => $value['label']
+						);
+					}
+				}
+			}
+		}
+
+		return $option_mappings;
+	}
+
+	/**
+	 * Prepare option values for variation creation using proper IDs
+	 */
+	private function prepare_variation_option_values($wc_variation, $option_mappings) {
+		$option_values = array();
+		$attributes = $wc_variation->get_variation_attributes();
+
+		foreach ($attributes as $attribute_name => $attribute_value) {
+			if (empty($attribute_value)) {
+				continue;
+			}
+
+			$clean_name = str_replace(['attribute_', 'pa_'], '', $attribute_name);
+			$clean_key = strtolower(str_replace([' ', '-', '_'], '', $clean_name));
+
+			// Get the term to get the proper label
+			$taxonomy = str_replace('attribute_', '', $attribute_name);
+			$term = get_term_by('slug', $attribute_value, $taxonomy);
+			$label = $term ? $term->name : $attribute_value;
+
+			// Find the option mapping
+			if (isset($option_mappings[$clean_key])) {
+				$option_mapping = $option_mappings[$clean_key];
+				$label_key = strtolower($label);
+
+				if (isset($option_mapping['values'][$label_key])) {
+					$value_mapping = $option_mapping['values'][$label_key];
+
+					$option_values[] = array(
+						'option_display_name' => $option_mapping['display_name'],
+						'label' => $value_mapping['label'],
+						'id' => (int) $value_mapping['id'],
+						'option_id' => (int) $option_mapping['option_id']
+					);
+				}
+			}
+		}
+
+		return $option_values;
 	}
 
 	/**

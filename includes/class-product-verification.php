@@ -457,8 +457,8 @@ class WC_BC_Product_Verification {
 				$current_value = $field['value'] ?? '';
 				$new_value = $supplier_name ?: '';
 
-				// Only update if values are different
-				if ($current_value !== $new_value) {
+				// Only update if values are different and we have a new value
+				if ($current_value !== $new_value && !empty($new_value)) {
 					$updated_fields[] = array(
 						'id' => $field['id'],
 						'name' => '__supplier',
@@ -468,6 +468,9 @@ class WC_BC_Product_Verification {
 					$fix_messages[] = "Updated supplier: {$current_value} → {$new_value}";
 				} else {
 					$updated_fields[] = $field; // Keep existing
+					if (!empty($current_value)) {
+						$fix_messages[] = "Supplier field already exists: {$current_value}";
+					}
 				}
 			} else {
 				$updated_fields[] = $field; // Keep other fields
@@ -496,7 +499,8 @@ class WC_BC_Product_Verification {
 	private function verify_and_fix_variation($product_record) {
 		// First check if the variation record is valid
 		if (empty($product_record->bc_variation_id)) {
-			return array('success' => false, 'message' => 'No BigCommerce variation ID found');
+			// Create the missing variation
+			return $this->create_missing_variation($product_record);
 		}
 
 		// Get BC variant
@@ -563,6 +567,66 @@ class WC_BC_Product_Verification {
 		}
 
 		return array('success' => true, 'message' => $message);
+	}
+
+	/**
+	 * Create missing variation in BigCommerce
+	 */
+	private function create_missing_variation($product_record) {
+		// Get WC variation
+		$wc_variation = wc_get_product($product_record->wc_variation_id);
+		if (!$wc_variation) {
+			return array('success' => false, 'message' => 'WooCommerce variation not found');
+		}
+
+		// Get variation attributes
+		$attributes = $wc_variation->get_attributes();
+		$option_values = array();
+
+		foreach ($attributes as $attribute_name => $attribute_value) {
+			// Remove 'pa_' prefix if it exists
+			$clean_name = str_replace('pa_', '', $attribute_name);
+			$option_values[] = array(
+				'option_display_name' => ucfirst($clean_name),
+				'label' => $attribute_value
+			);
+		}
+
+		// Prepare variation data
+		$variation_data = array(
+			'sku' => $wc_variation->get_sku() ?: '',
+			'price' => (float) ($wc_variation->get_regular_price() ?: 0),
+			'option_values' => $option_values
+		);
+
+		// Set inventory if WC manages stock
+		if ($wc_variation->get_manage_stock()) {
+			$variation_data['inventory_level'] = (int) ($wc_variation->get_stock_quantity() ?: 0);
+			$variation_data['inventory_tracking'] = 'variant';
+		}
+
+		// Create variation in BigCommerce
+		$result = $this->bc_api->create_product_variant($product_record->bc_product_id, $variation_data);
+
+		if (isset($result['error'])) {
+			return array('success' => false, 'message' => 'Failed to create variation: ' . $result['error']);
+		}
+
+		if (isset($result['data']['id'])) {
+			// Update the verification record with the new BC variation ID
+			global $wpdb;
+			$wpdb->update(
+				$this->verification_table,
+				array('bc_variation_id' => $result['data']['id']),
+				array('id' => $product_record->id),
+				array('%d'),
+				array('%d')
+			);
+
+			return array('success' => true, 'message' => 'Created missing variation with ID: ' . $result['data']['id']);
+		}
+
+		return array('success' => false, 'message' => 'Failed to create variation - no ID returned');
 	}
 
 	/**

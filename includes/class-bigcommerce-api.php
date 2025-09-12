@@ -477,4 +477,12 @@ class WC_BC_BigCommerce_API {
 		$endpoint = "catalog/products/{$product_id}/custom-fields/{$custom_field_id}";
 		return $this->make_request($endpoint, 'DELETE', null, 'v3');
 	}
+
+	/**
+	 * Update a product option value
+	 */
+	public function update_product_option_value($product_id, $option_id, $value_id, $value_data) {
+		$endpoint = "catalog/products/{$product_id}/options/{$option_id}/values/{$value_id}";
+		return $this->make_request($endpoint, 'PUT', $value_data);
+	}
 }

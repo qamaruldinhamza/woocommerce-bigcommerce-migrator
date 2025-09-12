@@ -87,6 +87,9 @@
             $('#stop-sync').on('click', this.stopProductSync.bind(this));
 
 
+            // Add this line to your existing bindEvents function
+            $('#set-default-variants').on('click', this.setDefaultVariants.bind(this));
+            $('#stop-default-variants').on('click', this.stopDefaultVariants.bind(this));
         },
 
         checkMigrationStatus: function() {
@@ -1608,5 +1611,115 @@
 
         updateCustomFieldsBatch();
     });
+
+
+    // Add these properties to track the default variants process
+    WCBCMigrator.isDefaultVariantsRunning = false;
+    WCBCMigrator.shouldStopDefaultVariants = false;
+
+    $('#set-default-variants').on('click', function() {
+        if (!confirm('Are you sure you want to set default variant options for all migrated products?')) {
+            return;
+        }
+
+        WCBCMigrator.isDefaultVariantsRunning = true;
+        WCBCMigrator.shouldStopDefaultVariants = false;
+
+        var logContainer = $('#verification-live-log');
+        var logEntries = $('#verification-log-entries');
+        var startButton = $(this);
+        var stopButton = $('#stop-default-variants');
+
+        logContainer.show();
+        logEntries.html('');
+        startButton.prop('disabled', true);
+        stopButton.prop('disabled', false);
+
+        var progressBar = $('#variant-default-progress-bar');
+        var progressFill = $('#variant-default-progress-fill');
+        progressBar.show();
+
+        function setDefaultVariantsBatch() {
+            // Check if we should stop
+            if (WCBCMigrator.shouldStopDefaultVariants) {
+                WCBCMigrator.finishDefaultVariants();
+                return;
+            }
+
+            $.ajax({
+                url: wcBcMigrator.apiUrl + 'products/set-default-variants',
+                method: 'POST',
+                data: {
+                    batch_size: 20
+                },
+                beforeSend: function(xhr) {
+                    xhr.setRequestHeader('X-WP-Nonce', wcBcMigrator.nonce);
+                },
+                success: function(response) {
+                    if (response.success) {
+                        logEntries.prepend('<div class="log-entry success">Batch processed: ' + response.processed + ' products. Updated: ' + response.updated + ', Failed: ' + response.failed + '. Remaining: ' + response.remaining + '</div>');
+
+                        if (response.remaining > 0 && response.processed > 0 && !WCBCMigrator.shouldStopDefaultVariants) {
+                            // Calculate progress
+                            $.ajax({
+                                url: wcBcMigrator.apiUrl + 'migrate/stats',
+                                method: 'GET',
+                                beforeSend: function(xhr) { xhr.setRequestHeader('X-WP-Nonce', wcBcMigrator.nonce); },
+                                success: function(stats_response) {
+                                    let total = stats_response.success;
+                                    let progress = total > 0 ? ((total - response.remaining) / total) * 100 : 0;
+                                    progressFill.css('width', progress + '%').text(Math.round(progress) + '%');
+                                }
+                            });
+
+                            // Schedule next batch with 1 second delay
+                            setTimeout(function() {
+                                if (!WCBCMigrator.shouldStopDefaultVariants) {
+                                    setDefaultVariantsBatch();
+                                }
+                            }, 1000);
+                        } else {
+                            WCBCMigrator.finishDefaultVariants();
+                            if (!WCBCMigrator.shouldStopDefaultVariants) {
+                                logEntries.prepend('<div class="log-entry success">All default variant options have been set successfully!</div>');
+                                progressFill.css('width', '100%').text('100%');
+                            }
+                        }
+                    } else {
+                        logEntries.prepend('<div class="log-entry error">Error: ' + response.message + '</div>');
+                        WCBCMigrator.finishDefaultVariants();
+                    }
+                },
+                error: function() {
+                    logEntries.prepend('<div class="log-entry error">An unexpected error occurred. Please check the server logs.</div>');
+                    WCBCMigrator.finishDefaultVariants();
+                }
+            });
+        }
+
+        setDefaultVariantsBatch();
+    });
+
+    // Stop button handler
+    $('#stop-default-variants').on('click', function(e) {
+        e.preventDefault();
+        WCBCMigrator.shouldStopDefaultVariants = true;
+        $('#stop-default-variants').prop('disabled', true).text('Stopping...');
+    });
+    // Finish function
+    WCBCMigrator.finishDefaultVariants = function() {
+        this.isDefaultVariantsRunning = false;
+        this.shouldStopDefaultVariants = false;
+
+        $('#set-default-variants').prop('disabled', false);
+        $('#stop-default-variants').prop('disabled', true).text('Stop Process');
+
+        var logEntries = $('#verification-log-entries');
+        if (this.shouldStopDefaultVariants) {
+            logEntries.prepend('<div class="log-entry info">Default variants process stopped by user</div>');
+        } else {
+            logEntries.prepend('<div class="log-entry info">Default variants process completed</div>');
+        }
+    };
 
 })(jQuery);

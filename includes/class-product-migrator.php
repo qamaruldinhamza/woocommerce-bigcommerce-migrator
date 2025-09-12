@@ -1585,4 +1585,154 @@ class WC_BC_Product_Migrator {
 		}
 	}
 
+	/**
+	 * Process a batch of products to set default variant options
+	 */
+	public function set_default_variant_options_batch($batch_size = 20) {
+		global $wpdb;
+		$migrator_table = $wpdb->prefix . WC_BC_MIGRATOR_TABLE;
+
+		// Get products that have custom fields updated but no default variants set
+		$products_to_update = $wpdb->get_results($wpdb->prepare(
+			"SELECT DISTINCT wc_product_id, bc_product_id 
+         FROM $migrator_table 
+         WHERE status = 'success' 
+         AND wc_variation_id IS NULL
+         AND message LIKE '%%Custom fields updated with new weight%%'
+         AND message NOT LIKE '%%variant selected%%'
+         LIMIT %d",
+			$batch_size
+		));
+
+		if (empty($products_to_update)) {
+			return array('success' => true, 'message' => 'No products found requiring default variant selection.', 'processed' => 0);
+		}
+
+		$processed = 0;
+		$updated_count = 0;
+		$failed_count = 0;
+
+		foreach ($products_to_update as $product) {
+			try {
+				$bc_product_id = $product->bc_product_id;
+				$wc_product_id = $product->wc_product_id;
+
+				// Get WooCommerce product to check if it's variable
+				$wc_product = wc_get_product($wc_product_id);
+				if (!$wc_product || !$wc_product->is_type('variable')) {
+					// Skip non-variable products
+					WC_BC_Database::update_mapping($wc_product_id, null, array(
+						'message' => 'Product migrated successfully (Custom fields updated with new weight and variant selected - N/A for simple product)'
+					));
+					$processed++;
+					continue;
+				}
+
+				// Get product options from BigCommerce
+				$options_response = $this->bc_api->get_product_options($bc_product_id);
+
+				if (!isset($options_response['data']) || empty($options_response['data'])) {
+					throw new Exception('No product options found');
+				}
+
+				$options_updated = 0;
+
+				foreach ($options_response['data'] as $option) {
+					if (isset($option['option_values']) && !empty($option['option_values'])) {
+						// Find the first option value that should be default
+						$default_value = $this->find_best_default_option_value($option['option_values'], $option['display_name']);
+
+						if ($default_value) {
+							// Update this option value to be default
+							$update_data = array(
+								'is_default' => true
+							);
+
+							$update_result = $this->bc_api->update_product_option_value(
+								$bc_product_id,
+								$option['id'],
+								$default_value['id'],
+								$update_data
+							);
+
+							if (!isset($update_result['error'])) {
+								$options_updated++;
+							}
+
+							usleep(300000); // 0.3 second delay
+						}
+					}
+				}
+
+				if ($options_updated > 0) {
+					// Mark as updated
+					WC_BC_Database::update_mapping($wc_product_id, null, array(
+						'message' => 'Product migrated successfully (Custom fields updated with new weight and variant selected)'
+					));
+					$updated_count++;
+				} else {
+					throw new Exception('No default options were set');
+				}
+
+			} catch (Exception $e) {
+				WC_BC_Database::update_mapping($wc_product_id, null, array(
+					'message' => 'Failed to set default variants: ' . $e->getMessage()
+				));
+				$failed_count++;
+			}
+			$processed++;
+		}
+
+		$remaining_query = "SELECT COUNT(DISTINCT wc_product_id) FROM $migrator_table WHERE status = 'success' AND wc_variation_id IS NULL AND message LIKE '%%Custom fields updated with new weight%%' AND message NOT LIKE '%%variant selected%%'";
+		$remaining = $wpdb->get_var($remaining_query);
+
+		return array(
+			'success' => true,
+			'processed' => $processed,
+			'updated' => $updated_count,
+			'failed' => $failed_count,
+			'remaining' => $remaining
+		);
+	}
+
+	/**
+	 * Find the best default option value based on common preferences
+	 */
+	private function find_best_default_option_value($option_values, $display_name) {
+		if (empty($option_values)) {
+			return null;
+		}
+
+		$display_name_lower = strtolower($display_name);
+
+		// For size attributes, prioritize common default sizes
+		if (strpos($display_name_lower, 'size') !== false) {
+			$size_priority = array('medium', 'small', 'large', 'm', 's', 'l', 'one size', 'onesize', 'os');
+
+			foreach ($size_priority as $preferred_size) {
+				foreach ($option_values as $value) {
+					if (strtolower($value['label']) === $preferred_size) {
+						return $value;
+					}
+				}
+			}
+		}
+
+		// For color attributes, prioritize neutral colors
+		if (strpos($display_name_lower, 'color') !== false || strpos($display_name_lower, 'colour') !== false) {
+			$color_priority = array('natural', 'white', 'black', 'silver', 'gold', 'brown', 'clear');
+
+			foreach ($color_priority as $preferred_color) {
+				foreach ($option_values as $value) {
+					if (strpos(strtolower($value['label']), $preferred_color) !== false) {
+						return $value;
+					}
+				}
+			}
+		}
+
+		// Default to first option value if no preference found
+		return $option_values[0];
+	}
+
 }

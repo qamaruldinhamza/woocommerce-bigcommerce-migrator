@@ -208,6 +208,18 @@ $client_secret = get_option('wc_bc_client_secret', '');
                         <div class="progress-bar" id="cf-update-progress-bar" style="display:none;">
                             <div class="progress-fill" id="cf-update-progress-fill">0%</div>
                         </div>
+
+                        <hr style="margin: 15px 0;">
+                        <button class="button button-primary" id="set-default-variants">
+                            <?php _e('Set Default Variant Options', 'wc-bc-migrator'); ?>
+                        </button>
+                        <button class="button button-secondary" id="stop-default-variants" disabled>
+                            <?php _e('Stop Process', 'wc-bc-migrator'); ?>
+                        </button>
+                        <div class="progress-bar" id="variant-default-progress-bar" style="display:none;">
+                            <div class="progress-fill" id="variant-default-progress-fill">0%</div>
+                        </div>
+
                     </div>
                     <div class="action-group">
                         <h3><?php _e('Run Verification', 'wc-bc-migrator'); ?></h3>

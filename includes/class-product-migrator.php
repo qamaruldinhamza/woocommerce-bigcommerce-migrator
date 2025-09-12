@@ -1432,6 +1432,10 @@ class WC_BC_Product_Migrator {
 
 							$new_name = '__' . $base_name;
 
+							if ($base_name !== "weight_range_grams" || $base_name !== "__weight_range_grams") {
+								$new_name = "Weight Range";
+							}
+
 							// Update the custom field
 							$responses[$bc_product_id][] = $this->bc_api->update_product_custom_field($bc_product_id, $field['id'], array('name' => $new_name));
 

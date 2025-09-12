@@ -1392,11 +1392,11 @@ class WC_BC_Product_Migrator {
 		// Get products that are migrated but not yet updated
 		$products_to_update = $wpdb->get_results($wpdb->prepare(
 			"SELECT DISTINCT wc_product_id, bc_product_id 
-			 FROM $migrator_table 
-			 WHERE status = 'success' 
-			 AND wc_variation_id IS NULL
-			 AND (message NOT LIKE '%%Custom fields updated%%' OR message IS NULL)
-			 LIMIT %d",
+         FROM $migrator_table 
+         WHERE status = 'success' 
+         AND wc_variation_id IS NULL
+         AND (message NOT LIKE '%%Custom fields updated with new weight%%' OR message IS NULL)
+         LIMIT %d",
 			$batch_size
 		));
 
@@ -1407,6 +1407,7 @@ class WC_BC_Product_Migrator {
 		$processed = 0;
 		$updated_count = 0;
 		$failed_count = 0;
+		$deleted_count =0;
 		$responses = array();
 
 		foreach ($products_to_update as $product) {
@@ -1426,27 +1427,87 @@ class WC_BC_Product_Migrator {
 						'weight_range_grams'
 					);
 
-					foreach ($custom_fields_response['data'] as $field) {
-						$base_name = ltrim($field['name'], '_'); // Remove existing underscores for comparison
-						if (in_array($base_name, $fields_to_update) && substr($field['name'], 0, 2) !== '__') {
+					// Handle weight range fields specially - check for duplicates
+					$weight_range_fields = array();
+					$other_fields = array();
 
+					foreach ($custom_fields_response['data'] as $field) {
+						$base_name = ltrim($field['name'], '_');
+
+						if ($base_name === 'weight_range_grams' || $field['name'] === '__weight_range_grams') {
+							$weight_range_fields[] = $field;
+						} else {
+							$other_fields[] = $field;
+						}
+					}
+
+					// Process weight range fields
+					if (!empty($weight_range_fields)) {
+						$preferred_field = null;
+						$fields_to_delete = array();
+
+						// Find the preferred field (prioritize __weight_range_grams)
+						foreach ($weight_range_fields as $field) {
+							if ($field['name'] === '__weight_range_grams') {
+								$preferred_field = $field;
+							} elseif (!$preferred_field && ltrim($field['name'], '_') === 'weight_range_grams') {
+								$preferred_field = $field;
+							} else {
+								$fields_to_delete[] = $field;
+							}
+						}
+
+						// Update the preferred field
+						if ($preferred_field) {
+							// Convert "grams" to "g" in the value
+							$new_value = str_replace(' grams', ' g', $preferred_field['value']);
+
+							$update_data = array(
+								'name' => 'Weight Range',
+								'value' => $new_value
+							);
+
+							$responses[$bc_product_id][] = $this->bc_api->update_product_custom_field(
+								$bc_product_id,
+								$preferred_field['id'],
+								$update_data
+							);
+							usleep(300000);
+						}
+
+						// Delete duplicate weight range fields
+						foreach ($fields_to_delete as $field) {
+							$delete_result = $this->bc_api->delete_product_custom_field($bc_product_id, $field['id']);
+							if (isset($delete_result['error'])) {
+								error_log("Failed to delete duplicate weight range field: " . $delete_result['error']);
+							}else{
+								$deleted_count++;
+							}
+							usleep(300000);
+						}
+					}
+
+					// Process other fields
+					foreach ($other_fields as $field) {
+						$base_name = ltrim($field['name'], '_');
+
+						if (in_array($base_name, $fields_to_update) && substr($field['name'], 0, 2) !== '__') {
 							$new_name = '__' . $base_name;
 
-							if ($base_name !== "weight_range_grams" || $base_name !== "__weight_range_grams") {
-								$new_name = "Weight Range";
-							}
-
 							// Update the custom field
-							$responses[$bc_product_id][] = $this->bc_api->update_product_custom_field($bc_product_id, $field['id'], array('name' => $new_name));
-
-							usleep(300000); // 0.3 second delay per update
+							$responses[$bc_product_id][] = $this->bc_api->update_product_custom_field(
+								$bc_product_id,
+								$field['id'],
+								array('name' => $new_name)
+							);
+							usleep(300000);
 						}
 					}
 				}
 
 				// Mark as updated
 				WC_BC_Database::update_mapping($wc_product_id, null, array(
-					'message' => 'Product migrated successfully (Custom fields updated)'
+					'message' => 'Product migrated successfully (Custom fields updated with new weight)'
 				));
 				$updated_count++;
 
@@ -1459,7 +1520,7 @@ class WC_BC_Product_Migrator {
 			$processed++;
 		}
 
-		$remaining_query = "SELECT COUNT(DISTINCT wc_product_id) FROM $migrator_table WHERE status = 'success' AND wc_variation_id IS NULL AND (message NOT LIKE '%%Custom fields updated%%' OR message IS NULL)";
+		$remaining_query = "SELECT COUNT(DISTINCT wc_product_id) FROM $migrator_table WHERE status = 'success' AND wc_variation_id IS NULL AND (message NOT LIKE '%%Custom fields updated with new weight%%' OR message IS NULL)";
 		$remaining = $wpdb->get_var($remaining_query);
 
 		return array(
@@ -1467,6 +1528,7 @@ class WC_BC_Product_Migrator {
 			'processed' => $processed,
 			'updated' => $updated_count,
 			'failed' => $failed_count,
+			'deleted' => $deleted_count,
 			'remaining' => $remaining
 		);
 	}

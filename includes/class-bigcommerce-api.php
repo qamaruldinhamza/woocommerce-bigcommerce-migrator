@@ -469,4 +469,12 @@ class WC_BC_BigCommerce_API {
 
 		return $this->make_request($endpoint, 'GET');
 	}
+
+	/**
+	 * Delete a specific custom field for a product
+	 */
+	public function delete_product_custom_field($product_id, $custom_field_id) {
+		$endpoint = "catalog/products/{$product_id}/custom-fields/{$custom_field_id}";
+		return $this->make_request($endpoint, 'DELETE', null, 'v3');
+	}
 }

@@ -249,7 +249,7 @@ class WC_BC_REST_API {
 		register_rest_route('wc-bc-migrator/v1', '/products/set-default-variants', array(
 			'methods' => 'POST',
 			'callback' => array($this, 'set_default_variants'),
-			'permission_callback' => array($this, 'check_permissions')
+			'permission_callback' => array($this, 'check_permission')
 		));
 
 	}

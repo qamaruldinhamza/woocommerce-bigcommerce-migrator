@@ -1598,9 +1598,8 @@ class WC_BC_Product_Migrator {
          FROM $migrator_table 
          WHERE status = 'success' 
          AND wc_variation_id IS NULL
-         AND message LIKE '%%Custom fields updated with new weight%%'
          AND message NOT LIKE '%%variant selected%%'
-         LIMIT %d",
+         LIMIT %d",//         AND message LIKE '%%Custom fields updated with new weight%%'
 			$batch_size
 		));
 

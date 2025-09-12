@@ -87,9 +87,9 @@
             $('#stop-sync').on('click', this.stopProductSync.bind(this));
 
 
-            // Add this line to your existing bindEvents function
+            /*// Add this line to your existing bindEvents function
             $('#set-default-variants').on('click', this.setDefaultVariants.bind(this));
-            $('#stop-default-variants').on('click', this.stopDefaultVariants.bind(this));
+            $('#stop-default-variants').on('click', this.stopDefaultVariants.bind(this));*/
         },
 
         checkMigrationStatus: function() {

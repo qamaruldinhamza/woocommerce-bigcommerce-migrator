@@ -272,24 +272,46 @@
             var button = $(e.target);
             button.prop('disabled', true).text('Preparing...');
 
+            // Show progress indicator
+            this.showLoadingOverlay('Preparing products for migration...');
+
             $.ajax({
                 url: wcBcMigrator.apiUrl + 'migrate/prepare',
                 method: 'POST',
+                timeout: 300000, // 5 minute timeout
                 beforeSend: function(xhr) {
                     xhr.setRequestHeader('X-WP-Nonce', wcBcMigrator.nonce);
                 },
                 success: function(response) {
-                    WCBCMigrator.addLog('info', 'Prepared ' + response.inserted + ' products for migration');
-                    if (response.skipped > 0) {
-                        WCBCMigrator.addLog('warning', 'Skipped ' + response.skipped + ' products (already prepared)');
+                    if (response.success) {
+                        WCBCMigrator.addLog('success', 'Prepared ' + response.inserted + ' products for migration');
+                        if (response.skipped > 0) {
+                            WCBCMigrator.addLog('info', 'Skipped ' + response.skipped + ' products (already prepared)');
+                        }
+                        if (response.batches_processed) {
+                            WCBCMigrator.addLog('info', 'Processed in ' + response.batches_processed + ' batches');
+                        }
+                    } else if (response.partial_success) {
+                        // Handle partial success
+                        WCBCMigrator.addLog('warning', 'Preparation partially completed: ' + (response.inserted || 0) + ' products prepared');
+                        WCBCMigrator.addLog('info', 'You can run preparation again to continue or start migration with current data');
+                    } else {
+                        WCBCMigrator.addLog('error', 'Preparation failed: ' + (response.error || response.message || 'Unknown error'));
                     }
+
                     WCBCMigrator.loadStats();
                 },
-                error: function() {
-                    WCBCMigrator.addLog('error', 'Failed to prepare products');
+                error: function(xhr, status, error) {
+                    if (status === 'timeout') {
+                        WCBCMigrator.addLog('warning', 'Preparation timed out - some products may have been prepared. Check stats and retry if needed.');
+                    } else {
+                        WCBCMigrator.addLog('error', 'Preparation failed: Network error or server timeout');
+                    }
+                    WCBCMigrator.loadStats(); // Still load stats to see what was processed
                 },
                 complete: function() {
                     button.prop('disabled', false).text('Prepare Products for Migration');
+                    WCBCMigrator.hideLoadingOverlay();
                 }
             });
         },

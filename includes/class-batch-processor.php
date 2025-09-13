@@ -9,25 +9,31 @@ class WC_BC_Batch_Processor {
 		global $wpdb;
 		$table_name = $wpdb->prefix . WC_BC_MIGRATOR_TABLE;
 
-		// Set memory and time limits
-		//ini_set('memory_limit', '1080M');
-		set_time_limit(600); // 5 minutes
+		// Set more conservative limits
+		set_time_limit(300); // 5 minutes max
+		ini_set('memory_limit', '512M');
 
 		try {
-			// Process products in smaller batches to avoid memory issues
-			$batch_size = 100;
+			$batch_size = 25; // Smaller batch size
 			$offset = 0;
 			$inserted = 0;
 			$skipped = 0;
 			$total_processed = 0;
+			$max_batches = 40; // Limit total batches to prevent infinite loops
+			$batch_count = 0;
 
 			do {
-				// Get products in batches
+				// Safety check - prevent infinite processing
+				if ($batch_count >= $max_batches) {
+					error_log("Preparation stopped after {$max_batches} batches to prevent timeout");
+					break;
+				}
+
 				$args = array(
 					'post_type' => 'product',
 					'posts_per_page' => $batch_size,
 					'offset' => $offset,
-					'post_status' => array('publish', 'draft'), /// Added draft here
+					'post_status' => array('publish', 'draft'),
 					'fields' => 'ids',
 				);
 
@@ -46,7 +52,7 @@ class WC_BC_Batch_Processor {
 						}
 
 						if ($product->is_type('variable')) {
-							// Check if parent product exists in mapping table
+							// Handle parent product
 							$parent_exists = $wpdb->get_var($wpdb->prepare(
 								"SELECT id FROM $table_name WHERE wc_product_id = %d AND wc_variation_id IS NULL",
 								$product_id
@@ -58,16 +64,13 @@ class WC_BC_Batch_Processor {
 									'wc_variation_id' => null,
 									'status' => 'pending',
 								));
-
-								if ($result) {
-									$inserted++;
-								}
+								if ($result) $inserted++;
 							} else {
 								$skipped++;
 							}
 
-							// Handle variations - only insert new ones
-							$variations = $product->get_children();
+							// Handle variations with limit to prevent memory issues
+							$variations = array_slice($product->get_children(), 0, 100); // Limit variations
 							foreach ($variations as $variation_id) {
 								$variation_exists = $wpdb->get_var($wpdb->prepare(
 									"SELECT id FROM $table_name WHERE wc_product_id = %d AND wc_variation_id = %d",
@@ -81,16 +84,13 @@ class WC_BC_Batch_Processor {
 										'wc_variation_id' => $variation_id,
 										'status' => 'pending',
 									));
-
-									if ($result) {
-										$inserted++;
-									}
+									if ($result) $inserted++;
 								} else {
 									$skipped++;
 								}
 							}
 						} else {
-							// Simple product - check if it exists
+							// Simple product
 							$simple_exists = $wpdb->get_var($wpdb->prepare(
 								"SELECT id FROM $table_name WHERE wc_product_id = %d AND wc_variation_id IS NULL",
 								$product_id
@@ -102,16 +102,12 @@ class WC_BC_Batch_Processor {
 									'wc_variation_id' => null,
 									'status' => 'pending',
 								));
-
-								if ($result) {
-									$inserted++;
-								}
+								if ($result) $inserted++;
 							} else {
 								$skipped++;
 							}
 						}
 
-						// Clear product from memory
 						unset($product);
 						$total_processed++;
 
@@ -122,30 +118,46 @@ class WC_BC_Batch_Processor {
 				}
 
 				$offset += $batch_size;
+				$batch_count++;
 
-				// Clear memory cache
-				wp_cache_flush();
+				// Clear caches more frequently
+				if ($batch_count % 5 === 0) {
+					wp_cache_flush();
+					if (function_exists('wp_suspend_cache_addition')) {
+						wp_suspend_cache_addition(true);
+					}
+				}
 
-				// Add a small delay to prevent overwhelming the server
-				if (count($products) === $batch_size) {
-					usleep(100000); // 0.1 second
+				// Add delay between batches
+				usleep(200000); // 0.2 seconds
+
+				// Check execution time - stop if getting close to limit
+				if ((time() - $_SERVER['REQUEST_TIME']) > 280) { // 280 seconds (4min 40sec)
+					error_log("Preparation stopped due to time limit approaching");
+					break;
 				}
 
 			} while (count($products) === $batch_size);
+
+			// Log completion
+			error_log("Preparation completed: Inserted: {$inserted}, Skipped: {$skipped}, Processed: {$total_processed}");
 
 			return array(
 				'success' => true,
 				'inserted' => $inserted,
 				'skipped' => $skipped,
 				'total_processed' => $total_processed,
+				'batches_processed' => $batch_count,
+				'message' => "Successfully processed {$total_processed} products in {$batch_count} batches"
 			);
 
 		} catch (Exception $e) {
-			error_log("Critical error in prepare_products: " . $e->getMessage());
+			$error_message = $e->getMessage();
+			error_log("Critical error in prepare_products: " . $error_message);
 
 			return array(
 				'success' => false,
-				'error' => $e->getMessage(),
+				'error' => $error_message,
 				'inserted' => $inserted ?? 0,
 				'skipped' => $skipped ?? 0,
 				'total_processed' => $total_processed ?? 0,

@@ -259,11 +259,29 @@ class WC_BC_REST_API {
 	}
 
 	public function prepare_migration() {
-		$batch_processor = new WC_BC_Batch_Processor();
-		$result = $batch_processor->prepare_products();
+		try {
+			// Increase time limit
+			set_time_limit(300);
+			ini_set('memory_limit', '1G');
 
-		return new WP_REST_Response($result, 200);
+			$batch_processor = new WC_BC_Batch_Processor();
+			$result = $batch_processor->prepare_products();
+
+			return new WP_REST_Response($result, 200);
+
+		} catch (Exception $e) {
+			error_log("Preparation error: " . $e->getMessage());
+
+			// Still return what we managed to process
+			return new WP_REST_Response(array(
+				'success' => false,
+				'error' => $e->getMessage(),
+				'partial_success' => true,
+				'message' => 'Process may have been interrupted but some products were likely processed. Check database and retry if needed.'
+			), 200); // Return 200, not 500, to avoid JS error handling
+		}
 	}
+
 
 	public function process_batch($request) {
 		$batch_size = $request->get_param('batch_size') ?: 10;

@@ -27,7 +27,7 @@ class WC_BC_Batch_Processor {
 					'post_type' => 'product',
 					'posts_per_page' => $batch_size,
 					'offset' => $offset,
-					'post_status' => 'publish',
+					'post_status' => array('publish', 'draft'), /// Added draft here
 					'fields' => 'ids',
 				);
 

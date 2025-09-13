@@ -503,19 +503,21 @@ class WC_BC_Product_Migrator {
 
 	private function prepare_product_data($product) {
 		// Get and fix weight
-		$weight = $this->convert_and_fix_weight($product->get_weight());
+		$weight = $this->get_weight_value($product->get_weight());
+
+		$wc_status = $product->get_status();
 
 		$data = array(
 			'name' => $product->get_name(),
 			'type' => 'physical',
 			'sku' => $product->get_sku() ?: 'SKU-' . $product->get_id(),
 			'description' => $product->get_description(),
-			'weight' => (float) $weight, // Now in ounces
+			'weight' => (float) $weight,
 			'price' => (float) ($product->get_regular_price() ?: 0),
 			'retail_price' => (float) ($product->get_regular_price() ?: 0),
 			'inventory_tracking' => $product->get_manage_stock() ? 'product' : 'none',
 			'inventory_level' => (int) ($product->get_stock_quantity() ?: 0),
-			'is_visible' => $product->get_catalog_visibility() !== 'hidden',
+			'is_visible' => ($wc_status === 'publish' && $product->get_catalog_visibility() !== 'hidden'),
 			'categories' => $this->map_categories($product),
 			'custom_fields' => $this->prepare_custom_fields($product),
 		);
@@ -642,6 +644,12 @@ class WC_BC_Product_Migrator {
 			'value' => (string) $product->get_id()
 		);
 
+		// Add WC status for future reference
+		$custom_fields[] = array(
+			'name' => '__wc_status',
+			'value' => $product->get_status()
+		);
+
 		// Add product tags as custom field with prefix and smart splitting
 		$tags = wp_get_post_terms($product->get_id(), 'product_tag', array('fields' => 'names'));
 		if (!empty($tags) && is_array($tags) && !is_wp_error($tags)) {
@@ -681,7 +689,7 @@ class WC_BC_Product_Migrator {
 			$variation = wc_get_product($variation_data['variation_id']);
 			if (!$variation) continue;
 
-			$variant_weight = $this->convert_and_fix_weight($variation->get_weight() ?: $product->get_weight());
+			$variant_weight = $this->get_weight_value($variation->get_weight() ?: $product->get_weight());
 
 			// Prepare variant data
 			$variant_data = array(
@@ -1007,6 +1015,44 @@ class WC_BC_Product_Migrator {
 
 		// Round to 2 decimal places
 		return round($weight_ounces, 2);
+	}
+
+	/**
+	 * Get weight value without conversion (both WC and BC use grams)
+	 */
+	private function get_weight_value($weight_string) {
+		if (empty($weight_string)) {
+			return 0;
+		}
+
+		// Convert to string if it's not
+		$weight_string = (string) $weight_string;
+
+		// Check if it contains a range (dash or hyphen)
+		if (strpos($weight_string, '-') !== false || strpos($weight_string, '–') !== false) {
+			// Split by various dash types
+			$parts = preg_split('/[-–—]/', $weight_string);
+
+			if (count($parts) == 2) {
+				$value1 = $this->parse_weight_value(trim($parts[0]));
+				$value2 = $this->parse_weight_value(trim($parts[1]));
+
+				// Fix the reversed range issue (29-3.5 should be 2.9-3.5)
+				if ($value1 > $value2 && $value1 > 10 && $value2 < 10) {
+					// Likely a typo - convert 29 to 2.9
+					$value1 = $value1 / 10;
+				}
+
+				// Return the maximum value
+				return max($value1, $value2);
+			} else {
+				// Single value
+				return $this->parse_weight_value($weight_string);
+			}
+		} else {
+			// Single value
+			return $this->parse_weight_value($weight_string);
+		}
 	}
 
 	/**
@@ -1539,7 +1585,7 @@ class WC_BC_Product_Migrator {
 	public function migrate_single_variation($variation, $parent_product, $bc_product_id) {
 		try {
 			// Prepare variant data (reuse existing logic from migrate_variations method)
-			$variant_weight = $this->convert_and_fix_weight($variation->get_weight() ?: $parent_product->get_weight());
+			$variant_weight = $this->get_weight_value($variation->get_weight() ?: $parent_product->get_weight());
 
 			$variant_data = array(
 				'sku' => $variation->get_sku() ?: 'VAR-' . $variation->get_id(),

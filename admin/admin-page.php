@@ -59,8 +59,8 @@ $client_secret = get_option('wc_bc_client_secret', '');
 				<div class="wc-bc-actions">
 					<div class="action-group">
 						<h3><?php _e('Initialize Migration', 'wc-bc-migrator'); ?></h3>
-						<p><?php _e('Prepare all products for migration. This will scan your WooCommerce products and create migration records.', 'wc-bc-migrator'); ?></p>
-						<button class="button" id="prepare-migration">
+                        <p><?php _e('Prepare all products (published and draft) for migration. This will scan your WooCommerce products and create migration records.', 'wc-bc-migrator'); ?></p>
+                        <button class="button" id="prepare-migration">
 							<?php _e('Prepare Products for Migration', 'wc-bc-migrator'); ?>
 						</button>
 						<button class="button button-danger" id="reset-migration" style="display: none;">

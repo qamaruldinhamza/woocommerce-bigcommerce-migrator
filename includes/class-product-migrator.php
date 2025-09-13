@@ -557,7 +557,7 @@ class WC_BC_Product_Migrator {
 		$main_image_id = $product->get_image_id();
 		if ($main_image_id) {
 			$image_url = wp_get_attachment_url($main_image_id);
-			if ($image_url) {
+			if ($image_url && $this->is_valid_image_url($image_url)) {
 				$images[] = array(
 					'is_thumbnail' => true,
 					'sort_order' => 0,
@@ -571,7 +571,7 @@ class WC_BC_Product_Migrator {
 		$sort_order = 1;
 		foreach ($gallery_ids as $image_id) {
 			$image_url = wp_get_attachment_url($image_id);
-			if ($image_url) {
+			if ($image_url && $this->is_valid_image_url($image_url)) {
 				$images[] = array(
 					'is_thumbnail' => false,
 					'sort_order' => $sort_order++,
@@ -581,6 +581,36 @@ class WC_BC_Product_Migrator {
 		}
 
 		return $images;
+	}
+
+	/**
+	 * Validate image URL for BigCommerce
+	 */
+	private function is_valid_image_url($url) {
+		// Check if URL is valid
+		if (!filter_var($url, FILTER_VALIDATE_URL)) {
+			return false;
+		}
+
+		// Check if it's HTTPS (BigCommerce requirement)
+		if (strpos($url, 'https://') !== 0) {
+			return false;
+		}
+
+		// Check file extension
+		$allowed_extensions = array('jpg', 'jpeg', 'png', 'gif', 'webp');
+		$extension = strtolower(pathinfo(parse_url($url, PHP_URL_PATH), PATHINFO_EXTENSION));
+
+		if (!in_array($extension, $allowed_extensions)) {
+			return false;
+		}
+
+		// Check URL length (BigCommerce has limits)
+		if (strlen($url) > 2048) {
+			return false;
+		}
+
+		return true;
 	}
 
 	private function map_categories($product) {
@@ -691,9 +721,16 @@ class WC_BC_Product_Migrator {
 
 			$variant_weight = $this->get_weight_value($variation->get_weight() ?: $product->get_weight());
 
+			$base_sku = $variation->get_sku();
+			if (empty($base_sku)) {
+				$base_sku = $product->get_sku() . '-VAR-' . $variation->get_id();
+			} else {
+				// Check if SKU might conflict and make it unique
+				$base_sku = $this->ensure_unique_sku($base_sku, $variation->get_id());
+			}
 			// Prepare variant data
 			$variant_data = array(
-				'sku' => $variation->get_sku() ?: 'VAR-' . $variation->get_id(),
+				'sku' => $base_sku,
 				'option_values' => array(), // Initialize as empty array
 				'price' => (float) ($variation->get_regular_price() ?: $product->get_regular_price() ?: 0),
 			);
@@ -717,7 +754,11 @@ class WC_BC_Product_Migrator {
 
 			// Inventory
 			if ($variation->get_manage_stock()) {
-				$variant_data['inventory_level'] = (int) ($variation->get_stock_quantity() ?: 0);
+				$stock_qty = $variation->get_stock_quantity();
+				// Ensure it's a valid integer
+				$stock_qty = max(0, (int) $stock_qty); // No negative inventory
+
+				$variant_data['inventory_level'] = $stock_qty;
 				$variant_data['inventory_tracking'] = 'variant';
 			}
 
@@ -745,7 +786,7 @@ class WC_BC_Product_Migrator {
 			$variant_image_id = $variation->get_image_id();
 			if ($variant_image_id && $variant_image_id != $product->get_image_id()) {
 				$image_url = wp_get_attachment_url($variant_image_id);
-				if ($image_url) {
+				if ($image_url && $this->is_valid_image_url($image_url)) { // Add validation
 					$variant_data['image_url'] = $image_url;
 				}
 			}
@@ -783,6 +824,19 @@ class WC_BC_Product_Migrator {
 		}
 
 		return array('success' => $success_count, 'errors' => $error_count);
+	}
+
+	/**
+	 * Ensure SKU is unique by appending variation ID if needed
+	 */
+	private function ensure_unique_sku($sku, $variation_id) {
+		// If SKU already has variation info, use as-is
+		if (strpos($sku, '-VAR-') !== false || strpos($sku, '_VAR_') !== false) {
+			return $sku;
+		}
+
+		// Append variation ID to make it unique
+		return $sku . '-VAR-' . $variation_id;
 	}
 
 	private function prepare_variant_option_values($variation, $product_options) {

@@ -15,7 +15,7 @@ class WC_BC_Batch_Processor {
 
 		try {
 			$batch_size = 25; // Smaller batch size
-			$offset = 5000;
+			$offset = 7000;
 			$inserted = 0;
 			$skipped = 0;
 			$total_processed = 0;

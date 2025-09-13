@@ -11,11 +11,11 @@ class WC_BC_Batch_Processor {
 
 		// Set more conservative limits
 		set_time_limit(300); // 5 minutes max
-		ini_set('memory_limit', '512M');
+		ini_set('memory_limit', '1024M');
 
 		try {
 			$batch_size = 25; // Smaller batch size
-			$offset = 0;
+			$offset = 5000;
 			$inserted = 0;
 			$skipped = 0;
 			$total_processed = 0;

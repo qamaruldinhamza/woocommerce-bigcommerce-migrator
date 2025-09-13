@@ -10,12 +10,12 @@ class WC_BC_Batch_Processor {
 		$table_name = $wpdb->prefix . WC_BC_MIGRATOR_TABLE;
 
 		// Set more conservative limits
-		set_time_limit(300); // 5 minutes max
+		set_time_limit(600); // 5 minutes max
 		ini_set('memory_limit', '1024M');
 
 		try {
 			$batch_size = 25; // Smaller batch size
-			$offset = 8500;
+			$offset = 9000;
 			$inserted = 0;
 			$skipped = 0;
 			$total_processed = 0;

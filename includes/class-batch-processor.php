@@ -15,7 +15,7 @@ class WC_BC_Batch_Processor {
 
 		try {
 			$batch_size = 25; // Smaller batch size
-			$offset = 4150;
+			$offset = 9000;
 			$inserted = 0;
 			$skipped = 0;
 			$total_processed = 0;
@@ -33,7 +33,7 @@ class WC_BC_Batch_Processor {
 					'post_type' => 'product',
 					'posts_per_page' => $batch_size,
 					'offset' => $offset,
-					'post_status' => array('draft'), //array('publish', 'draft'),
+					'post_status' => array('publish', 'draft'),
 					'fields' => 'ids',
 				);
 

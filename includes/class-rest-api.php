@@ -252,6 +252,18 @@ class WC_BC_REST_API {
 			'permission_callback' => array($this, 'check_permission')
 		));
 
+		register_rest_route('wc-bc-migrator/v1', '/products/update-size-options', array(
+			'methods' => 'POST',
+			'callback' => array($this, 'update_size_options'),
+			'permission_callback' => array($this, 'check_permission'),
+			'args' => array(
+				'batch_size' => array(
+					'required' => false,
+					'default' => 20,
+					'sanitize_callback' => 'absint',
+				),
+			),
+		));
 	}
 
 	public function check_permission() {
@@ -693,6 +705,22 @@ class WC_BC_REST_API {
 
 			$migrator = new WC_BC_Product_Migrator();
 			$result = $migrator->set_default_variant_options_batch($batch_size);
+
+			return new WP_REST_Response($result, 200);
+		} catch (Exception $e) {
+			return new WP_REST_Response(array(
+				'success' => false,
+				'message' => $e->getMessage()
+			), 500);
+		}
+	}
+
+	public function update_size_options($request) {
+		try {
+			$batch_size = $request->get_param('batch_size') ?: 20;
+
+			$migrator = new WC_BC_Product_Migrator();
+			$result = $migrator->update_size_options_batch($batch_size);
 
 			return new WP_REST_Response($result, 200);
 		} catch (Exception $e) {

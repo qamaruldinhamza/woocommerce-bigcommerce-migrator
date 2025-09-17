@@ -1872,4 +1872,121 @@ class WC_BC_Product_Migrator {
 		return $option_values[0];
 	}
 
+
+	/**
+	 * Update size options from rectangles to dropdown in batches
+	 */
+	public function update_size_options_batch($batch_size = 20) {
+		global $wpdb;
+		$migrator_table = $wpdb->prefix . WC_BC_MIGRATOR_TABLE;
+
+		// Get products that haven't had size options updated yet
+		$products_to_update = $wpdb->get_results($wpdb->prepare(
+			"SELECT DISTINCT wc_product_id, bc_product_id 
+         FROM $migrator_table 
+         WHERE status = 'success' 
+         AND wc_variation_id IS NULL
+         AND bc_product_id IS NOT NULL
+         AND (message NOT LIKE '%%size option updated%%' OR message IS NULL)
+         LIMIT %d",
+			$batch_size
+		));
+
+		if (empty($products_to_update)) {
+			return array(
+				'success' => true,
+				'message' => 'No products found requiring size option updates.',
+				'processed' => 0,
+				'remaining' => 0
+			);
+		}
+
+		$processed = 0;
+		$updated_count = 0;
+		$failed_count = 0;
+		$skipped_count = 0;
+
+		foreach ($products_to_update as $product) {
+			try {
+				$bc_product_id = $product->bc_product_id;
+				$wc_product_id = $product->wc_product_id;
+
+				// Get product options from BigCommerce
+				$options_response = $this->bc_api->get_product_options($bc_product_id);
+
+				if (!isset($options_response['data']) || empty($options_response['data'])) {
+					// No options found, mark as processed
+					WC_BC_Database::update_mapping($wc_product_id, null, array(
+						'message' => WC_BC_Database::append_to_message($wc_product_id, 'size option updated - no options found')
+					));
+					$skipped_count++;
+					$processed++;
+					continue;
+				}
+
+				$size_option_updated = false;
+
+				foreach ($options_response['data'] as $option) {
+					$option_name = strtolower($option['display_name']);
+
+					// Check if this is a size option with rectangles type
+					if (strpos($option_name, 'size') !== false && $option['type'] === 'rectangles') {
+
+						// Update the option type to dropdown
+						$update_data = array(
+							'type' => 'dropdown'
+						);
+
+						$update_result = $this->bc_api->update_product_option($bc_product_id, $option['id'], $update_data);
+
+						if (!isset($update_result['error'])) {
+							$size_option_updated = true;
+							error_log("Updated size option for product {$wc_product_id}, BC product {$bc_product_id}, option {$option['id']}");
+						} else {
+							error_log("Failed to update size option for product {$wc_product_id}: " . $update_result['error']);
+						}
+
+						usleep(300000); // 0.3 second delay between API calls
+					}
+				}
+
+				if ($size_option_updated) {
+					// Mark as updated
+					WC_BC_Database::update_mapping($wc_product_id, null, array(
+						'message' => WC_BC_Database::append_to_message($wc_product_id, 'size option updated')
+					));
+					$updated_count++;
+				} else {
+					// No size options found or they weren't rectangles
+					WC_BC_Database::update_mapping($wc_product_id, null, array(
+						'message' => WC_BC_Database::append_to_message($wc_product_id, 'size option updated - no rectangles found')
+					));
+					$skipped_count++;
+				}
+
+			} catch (Exception $e) {
+				WC_BC_Database::update_mapping($wc_product_id, null, array(
+					'message' => WC_BC_Database::append_to_message($wc_product_id, 'size option update failed: ' . $e->getMessage())
+				));
+				$failed_count++;
+				error_log("Error updating size options for product {$wc_product_id}: " . $e->getMessage());
+			}
+
+			$processed++;
+		}
+
+		// Get remaining count
+		$remaining_query = "SELECT COUNT(DISTINCT wc_product_id) FROM $migrator_table WHERE status = 'success' AND wc_variation_id IS NULL AND bc_product_id IS NOT NULL AND (message NOT LIKE '%%size option updated%%' OR message IS NULL)";
+		$remaining = $wpdb->get_var($remaining_query);
+
+		return array(
+			'success' => true,
+			'processed' => $processed,
+			'updated' => $updated_count,
+			'skipped' => $skipped_count,
+			'failed' => $failed_count,
+			'remaining' => $remaining
+		);
+	}
+
 }

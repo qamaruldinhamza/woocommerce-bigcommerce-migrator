@@ -485,4 +485,12 @@ class WC_BC_BigCommerce_API {
 		$endpoint = "catalog/products/{$product_id}/options/{$option_id}/values/{$value_id}";
 		return $this->make_request($endpoint, 'PUT', $value_data);
 	}
+
+	/**
+	 * Update a product option
+	 */
+	public function update_product_option($product_id, $option_id, $option_data) {
+		$endpoint = "catalog/products/{$product_id}/options/{$option_id}";
+		return $this->make_request('PUT', $endpoint, $option_data);
+	}
 }

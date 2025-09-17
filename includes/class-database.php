@@ -122,4 +122,23 @@ class WC_BC_Database {
 			$limit
 		) );
 	}
+
+	/**
+	 * Append message to existing message field
+	 */
+	public static function append_to_message($wc_product_id, $new_message) {
+		global $wpdb;
+		$table_name = $wpdb->prefix . WC_BC_MIGRATOR_TABLE;
+
+		$existing = $wpdb->get_var($wpdb->prepare(
+			"SELECT message FROM $table_name WHERE wc_product_id = %d AND wc_variation_id IS NULL LIMIT 1",
+			$wc_product_id
+		));
+
+		if ($existing && !empty(trim($existing))) {
+			return $existing . ' (' . $new_message . ')';
+		} else {
+			return $new_message;
+		}
+	}
 }

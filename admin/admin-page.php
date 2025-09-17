@@ -115,7 +115,34 @@ $client_secret = get_option('wc_bc_client_secret', '');
                         </div>
                     </div>
 
+                    <div class="migration-section action-group">
+                        <h3>Size Options Update</h3>
+                        <p>Update all product size options from rectangles to dropdown type.</p>
+
+                        <div class="migration-controls">
+                            <label for="size-batch-size">Batch Size:</label>
+                            <select id="size-batch-size">
+                                <option value="10">10</option>
+                                <option value="20" selected>20</option>
+                                <option value="30">30</option>
+                            </select>
+
+                            <button id="update-size-options" class="button button-primary">Update Size Options</button>
+                            <button id="stop-size-update" class="button" disabled>Stop Update</button>
+                        </div>
+
+                        <div id="size-progress-bar" class="progress-bar" style="display: none;">
+                            <div id="size-progress-fill" class="progress-fill">0%</div>
+                        </div>
+
+                        <div id="size-live-log" class="live-log" style="display: none;">
+                            <h4>Size Update Log</h4>
+                            <div id="size-log-entries" class="log-entries"></div>
+                        </div>
+                    </div>
 				</div>
+
+
 
                 <!-- Add sync log container -->
                 <div class="log-container" id="sync-live-log" style="display: none;">

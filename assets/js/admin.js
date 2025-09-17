@@ -90,6 +90,10 @@
             /*// Add this line to your existing bindEvents function
             $('#set-default-variants').on('click', this.setDefaultVariants.bind(this));
             $('#stop-default-variants').on('click', this.stopDefaultVariants.bind(this));*/
+
+            // Add to bindEvents function
+            $('#update-size-options').on('click', this.updateSizeOptions.bind(this));
+            $('#stop-size-update').on('click', this.stopSizeUpdate.bind(this));
         },
 
         checkMigrationStatus: function() {
@@ -893,6 +897,123 @@
 
             // Keep only last 50 entries
             $('#sync-log-entries .log-entry').slice(50).remove();
+        },
+
+        // Add these methods to WCBCMigrator object
+        updateSizeOptions: function(e) {
+            e.preventDefault();
+
+            if (this.isSizeUpdateRunning) return;
+
+            if (!confirm('Are you sure you want to update size options from rectangles to dropdown for all products?')) {
+                return;
+            }
+
+            this.isSizeUpdateRunning = true;
+            this.shouldStopSizeUpdate = false;
+
+            var logContainer = $('#size-live-log');
+            var logEntries = $('#size-log-entries');
+            var startButton = $('#update-size-options');
+            var stopButton = $('#stop-size-update');
+
+            logContainer.show();
+            logEntries.html('');
+            startButton.prop('disabled', true);
+            stopButton.prop('disabled', false);
+
+            var progressBar = $('#size-progress-bar');
+            var progressFill = $('#size-progress-fill');
+            progressBar.show();
+
+            this.addSizeLog('info', 'Starting size options update...');
+            this.processSizeUpdateBatch();
+        },
+
+        processSizeUpdateBatch: function() {
+            if (this.shouldStopSizeUpdate) {
+                this.finishSizeUpdate();
+                return;
+            }
+
+            var batchSize = $('#size-batch-size').val() || 20;
+
+            $.ajax({
+                url: wcBcMigrator.apiUrl + 'products/update-size-options',
+                method: 'POST',
+                data: { batch_size: batchSize },
+                beforeSend: function(xhr) {
+                    xhr.setRequestHeader('X-WP-Nonce', wcBcMigrator.nonce);
+                },
+                success: function(response) {
+                    if (response.success) {
+                        WCBCMigrator.addSizeLog('success', 'Batch processed: ' + response.processed + ' products. Updated: ' + response.updated + ', Skipped: ' + response.skipped + ', Failed: ' + response.failed + '. Remaining: ' + response.remaining);
+
+                        if (response.remaining > 0 && response.processed > 0 && !WCBCMigrator.shouldStopSizeUpdate) {
+                            // Calculate progress
+                            $.ajax({
+                                url: wcBcMigrator.apiUrl + 'migrate/stats',
+                                method: 'GET',
+                                beforeSend: function(xhr) { xhr.setRequestHeader('X-WP-Nonce', wcBcMigrator.nonce); },
+                                success: function(stats_response) {
+                                    let total = stats_response.success;
+                                    let progress = total > 0 ? ((total - response.remaining) / total) * 100 : 0;
+                                    $('#size-progress-fill').css('width', progress + '%').text(Math.round(progress) + '%');
+                                }
+                            });
+
+                            setTimeout(function() {
+                                if (!WCBCMigrator.shouldStopSizeUpdate) {
+                                    WCBCMigrator.processSizeUpdateBatch();
+                                }
+                            }, 1000);
+                        } else {
+                            WCBCMigrator.finishSizeUpdate();
+                            if (!WCBCMigrator.shouldStopSizeUpdate) {
+                                WCBCMigrator.addSizeLog('success', 'All size options have been updated successfully!');
+                                $('#size-progress-fill').css('width', '100%').text('100%');
+                            }
+                        }
+                    } else {
+                        WCBCMigrator.addSizeLog('error', 'Error: ' + response.message);
+                        WCBCMigrator.finishSizeUpdate();
+                    }
+                },
+                error: function() {
+                    WCBCMigrator.addSizeLog('error', 'An unexpected error occurred. Please check the server logs.');
+                    WCBCMigrator.finishSizeUpdate();
+                }
+            });
+        },
+
+        stopSizeUpdate: function(e) {
+            e.preventDefault();
+            this.shouldStopSizeUpdate = true;
+            $('#stop-size-update').prop('disabled', true).text('Stopping...');
+        },
+
+        finishSizeUpdate: function() {
+            this.isSizeUpdateRunning = false;
+            this.shouldStopSizeUpdate = false;
+
+            $('#update-size-options').prop('disabled', false);
+            $('#stop-size-update').prop('disabled', true).text('Stop Update');
+
+            var logEntries = $('#size-log-entries');
+            if (this.shouldStopSizeUpdate) {
+                logEntries.prepend('<div class="log-entry info">Size options update stopped by user</div>');
+            } else {
+                logEntries.prepend('<div class="log-entry info">Size options update completed</div>');
+            }
+        },
+
+        addSizeLog: function(type, message) {
+            var timestamp = new Date().toLocaleTimeString();
+            var logEntry = $('<div class="log-entry ' + type + '">[' + timestamp + '] ' + message + '</div>');
+            $('#size-log-entries').prepend(logEntry);
+
+            // Keep only last 50 entries
+            $('#size-log-entries .log-entry').slice(50).remove();
         }
     };
 
@@ -904,6 +1025,9 @@
     // Add verification methods to the WCBCMigrator object
     WCBCMigrator.verificationInterval = null;
     WCBCMigrator.isVerificationRunning = false;
+
+    WCBCMigrator.isSizeUpdateRunning = false;
+    WCBCMigrator.shouldStopSizeUpdate = false;
 
     // Initialize verification system
     WCBCMigrator.initVerification = function(e) {

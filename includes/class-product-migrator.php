@@ -1641,12 +1641,22 @@ class WC_BC_Product_Migrator {
 			// Prepare variant data (reuse existing logic from migrate_variations method)
 			$variant_weight = $this->get_weight_value($variation->get_weight() ?: $parent_product->get_weight());
 
+			// Generate unique SKU to avoid conflicts
+			$base_sku = $variation->get_sku();
+			if (empty($base_sku)) {
+				$base_sku = $parent_product->get_sku() . '-VAR-' . $variation->get_id();
+			} else {
+				// Ensure uniqueness by appending variation ID if needed
+				$base_sku = $this->ensure_unique_sku($base_sku, $variation->get_id());
+			}
+
 			$variant_data = array(
-				'sku' => $variation->get_sku() ?: 'VAR-' . $variation->get_id(),
+				'sku' => $base_sku,
 				'option_values' => array(),
 				'price' => (float) ($variation->get_regular_price() ?: $parent_product->get_regular_price() ?: 0),
 			);
 
+			// Add weight if available
 			if ($variant_weight > 0) {
 				$variant_data['weight'] = (float) $variant_weight;
 			}
@@ -1655,6 +1665,22 @@ class WC_BC_Product_Migrator {
 			$variant_sale_price = $variation->get_sale_price();
 			if ($variant_sale_price !== '' && $variant_sale_price !== null && (float) $variant_sale_price > 0) {
 				$variant_data['sale_price'] = (float) $variant_sale_price;
+			}
+
+			// Add retail price
+			$retail_price = $variation->get_regular_price() ?: $parent_product->get_regular_price();
+			if ($retail_price > 0) {
+				$variant_data['retail_price'] = (float) $retail_price;
+			}
+
+			// ADD MISSING INVENTORY MANAGEMENT
+			if ($variation->get_manage_stock()) {
+				$stock_qty = $variation->get_stock_quantity();
+				// Ensure it's a valid integer (no negative inventory)
+				$stock_qty = max(0, (int) $stock_qty);
+
+				$variant_data['inventory_level'] = $stock_qty;
+				$variant_data['inventory_tracking'] = 'variant';
 			}
 
 			// Get product options for this parent product
@@ -1670,6 +1696,15 @@ class WC_BC_Product_Migrator {
 				throw new Exception('No option values found for variant');
 			}
 
+			// Add variant image if different from parent (with validation)
+			$variant_image_id = $variation->get_image_id();
+			if ($variant_image_id && $variant_image_id != $parent_product->get_image_id()) {
+				$image_url = wp_get_attachment_url($variant_image_id);
+				if ($image_url && $this->is_valid_image_url($image_url)) {
+					$variant_data['image_url'] = $image_url;
+				}
+			}
+
 			// Create variant in BigCommerce
 			$result = $this->bc_api->create_product_variant($bc_product_id, $variant_data);
 
@@ -1677,6 +1712,9 @@ class WC_BC_Product_Migrator {
 				return array('success' => true, 'bc_variation_id' => $result['data']['id']);
 			} else {
 				$error_msg = isset($result['error']) ? $result['error'] : 'Unknown error';
+				if (isset($result['errors'])) {
+					$error_msg .= ' - ' . json_encode($result['errors']);
+				}
 				throw new Exception($error_msg);
 			}
 

@@ -1905,6 +1905,7 @@ class WC_BC_Product_Migrator {
 		$updated_count = 0;
 		$failed_count = 0;
 		$skipped_count = 0;
+		$updateResults = array();
 
 		foreach ($products_to_update as $product) {
 			try {
@@ -1941,6 +1942,8 @@ class WC_BC_Product_Migrator {
 							);
 
 							$update_result = $this->bc_api->update_product_option($bc_product_id, $option['id'], $update_data);
+
+							$updateResults[$bc_product_id][$option['id']]= $update_result;
 
 							if (!isset($update_result['error'])) {
 								$size_option_updated = true;

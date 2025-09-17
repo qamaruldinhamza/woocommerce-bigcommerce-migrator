@@ -1929,24 +1929,31 @@ class WC_BC_Product_Migrator {
 				foreach ($options_response['data'] as $option) {
 					$option_name = strtolower($option['display_name']);
 
-					// Check if this is a size option with rectangles type
-					if (strpos($option_name, 'size') !== false && $option['type'] === 'rectangles') {
+					// Check if this is a size option (regardless of current type)
+					if (strpos($option_name, 'size') !== false) {
 
-						// Update the option type to dropdown
-						$update_data = array(
-							'type' => 'dropdown'
-						);
+						// Only update if it's NOT already a dropdown
+						if ($option['type'] !== 'dropdown') {
 
-						$update_result = $this->bc_api->update_product_option($bc_product_id, $option['id'], $update_data);
+							// Update the option type to dropdown
+							$update_data = array(
+								'type' => 'dropdown'
+							);
 
-						if (!isset($update_result['error'])) {
-							$size_option_updated = true;
-							error_log("Updated size option for product {$wc_product_id}, BC product {$bc_product_id}, option {$option['id']}");
+							$update_result = $this->bc_api->update_product_option($bc_product_id, $option['id'], $update_data);
+
+							if (!isset($update_result['error'])) {
+								$size_option_updated = true;
+								error_log("Updated size option for product {$wc_product_id}, BC product {$bc_product_id}, option {$option['id']} from {$option['type']} to dropdown");
+							} else {
+								error_log("Failed to update size option for product {$wc_product_id}: " . $update_result['error']);
+							}
+
+							usleep(300000); // 0.3 second delay between API calls
 						} else {
-							error_log("Failed to update size option for product {$wc_product_id}: " . $update_result['error']);
+							// Already a dropdown, just log it
+							error_log("Size option for product {$wc_product_id} is already dropdown type");
 						}
-
-						usleep(300000); // 0.3 second delay between API calls
 					}
 				}
 

@@ -1995,7 +1995,8 @@ class WC_BC_Product_Migrator {
 			'updated' => $updated_count,
 			'skipped' => $skipped_count,
 			'failed' => $failed_count,
-			'remaining' => $remaining
+			'remaining' => $remaining,
+			'message' => $updateResults
 		);
 	}
 

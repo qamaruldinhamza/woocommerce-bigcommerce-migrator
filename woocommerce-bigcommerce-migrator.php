@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce to BigCommerce Migrator
  * Plugin URI: https://amberman.com
  * Description: Migrate WooCommerce products to BigCommerce with batch processing
- * Version: 1.5.4
+ * Version: 1.5.5
  * Author: Qamar Ul Din Hamza
  * License: GPL v2 or later
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('WC_BC_MIGRATOR_VERSION', '1.5.4');
+define('WC_BC_MIGRATOR_VERSION', '1.5.5');
 define('WC_BC_MIGRATOR_PATH', plugin_dir_path(__FILE__));
 define('WC_BC_MIGRATOR_URL', plugin_dir_url(__FILE__));
 define('WC_BC_MIGRATOR_TABLE', 'wc_bc_product_mapping');
